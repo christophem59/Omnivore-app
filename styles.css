@@ -64,6 +64,19 @@ main { padding: 16px; max-width: 640px; margin: 0 auto; }
   margin: 0 0 10px;
 }
 
+.group-collapsible > summary {
+  font-size: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  cursor: pointer;
+  list-style: revert;
+}
+.group-collapsible > summary::marker { color: var(--text-dim); }
+.group-collapsible .card-list { margin-top: 10px; }
+
+.card-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+
 .card-list { display: flex; flex-direction: column; gap: 10px; }
 .card-list:empty::after {
   content: "Rien ici pour l'instant.";
