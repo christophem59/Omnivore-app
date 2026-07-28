@@ -115,10 +115,11 @@ function isAlreadyAdded(result, items) {
 function deriveTvEpisodeInfo(raw, progressEpisode, todayStr) {
   const episodes = raw.episodes || [];
   const idx = progressEpisode; // 0-indexé : prochain épisode non vu
+  const airedCount = episodes.filter((e) => e.airdate && e.airdate <= todayStr).length;
 
   if (idx >= episodes.length) {
     if (raw.status === "Ended") {
-      return { kind: "finished" };
+      return { kind: "finished", airedCount, totalCount: episodes.length };
     }
     return {
       kind: "episode",
@@ -131,12 +132,13 @@ function deriveTvEpisodeInfo(raw, progressEpisode, todayStr) {
       summary: null,
       streaming: raw.streaming || null,
       extraBehind: 0,
+      airedCount,
+      totalCount: episodes.length,
     };
   }
 
   const ep = episodes[idx];
   const hasAired = !!ep.airdate && ep.airdate <= todayStr;
-  const airedCount = episodes.filter((e) => e.airdate && e.airdate <= todayStr).length;
   const extraBehind = Math.max(0, airedCount - (idx + 1));
 
   return {
@@ -150,6 +152,8 @@ function deriveTvEpisodeInfo(raw, progressEpisode, todayStr) {
     summary: ep.summary || null,
     streaming: raw.streaming || null,
     extraBehind,
+    airedCount,
+    totalCount: episodes.length,
   };
 }
 
@@ -217,6 +221,8 @@ function deriveAnimeEpisodeInfo(raw, progressEpisode, nowSec) {
     summary: null, // pas de résumé par épisode disponible côté AniList
     streaming: pickAnimeStreaming(streamingEpisodesRaw, target),
     extraBehind,
+    airedCount: airedCount || 0,
+    totalCount: totalEpisodes || null,
   };
 }
 
@@ -533,6 +539,21 @@ function el(tag, className, text) {
   return e;
 }
 
+/** Petite animation de confirmation sur la carte elle-même (indépendante
+ * du toast, qui lui n'apparaît que quand on rattrape/termine une série) :
+ * un ✓ vert qui pulse et s'efface, pour rendre visible le fait qu'on vient
+ * de valider un épisode même si un autre suit immédiatement derrière. */
+function flashWatched(cardEl) {
+  return new Promise((resolve) => {
+    const badge = document.createElement("div");
+    badge.className = "watched-flash-badge";
+    badge.textContent = "✓";
+    cardEl.appendChild(badge);
+    cardEl.classList.add("watched-flash");
+    setTimeout(resolve, 480);
+  });
+}
+
 /** Petit message de succès temporaire, en haut de l'écran. */
 function showToast(message) {
   const toast = document.getElementById("toast");
@@ -714,6 +735,7 @@ async function buildEpisodeCard(item) {
       e.stopPropagation();
       watchedBtn.disabled = true;
       try {
+        await flashWatched(card);
         await markEpisodeWatched(item);
       } catch (err) {
         alert(err.message);
@@ -728,10 +750,21 @@ async function buildEpisodeCard(item) {
   adjustBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     const current = (progress[item.id] && progress[item.id].episode) || 0;
-    const value = prompt("Dernier épisode vu (nombre) :", String(current));
+    const maxAllowed = typeof info.airedCount === "number" ? info.airedCount : null;
+    const promptLabel =
+      maxAllowed !== null
+        ? `Dernier épisode vu (nombre, ${maxAllowed} déjà diffusé(s) pour l'instant) :`
+        : "Dernier épisode vu (nombre) :";
+    const value = prompt(promptLabel, String(current));
     if (value === null) return;
     const parsed = parseInt(value, 10);
     if (Number.isNaN(parsed) || parsed < 0) return;
+    if (maxAllowed !== null && parsed > maxAllowed) {
+      alert(
+        `"${item.display_title}" n'a pour l'instant que ${maxAllowed} épisode(s) diffusé(s) : impossible de passer à l'épisode ${parsed}.`
+      );
+      return;
+    }
     updateProgress(item.id, parsed)
       .then(renderAll)
       .catch((err) => alert(err.message));
