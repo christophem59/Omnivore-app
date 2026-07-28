@@ -85,6 +85,7 @@ main { padding: 16px; max-width: 640px; margin: 0 auto; }
 }
 
 .card {
+  position: relative;
   display: flex;
   gap: 12px;
   background: var(--card);
@@ -92,6 +93,7 @@ main { padding: 16px; max-width: 640px; margin: 0 auto; }
   border-radius: var(--radius);
   padding: 12px;
   align-items: center;
+  overflow: hidden;
 }
 
 .card img.poster {
@@ -400,4 +402,35 @@ button.small-btn.primary-inline {
 }
 .episode-modal-summary.hidden {
   display: none;
+}
+
+/* --------- Animation "épisode marqué comme vu" --------- */
+
+@keyframes watched-pop {
+  0% { transform: scale(1); }
+  30% { transform: scale(1.015); border-color: var(--accent-2); }
+  100% { transform: scale(1); }
+}
+.card.watched-flash {
+  animation: watched-pop 0.48s ease;
+}
+
+@keyframes watched-badge-pop {
+  0% { opacity: 0; transform: scale(0.5); }
+  25% { opacity: 1; transform: scale(1.1); }
+  70% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1); }
+}
+.watched-flash-badge {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2.6rem;
+  color: white;
+  background: rgba(46, 125, 50, 0.88);
+  animation: watched-badge-pop 0.48s ease forwards;
+  pointer-events: none;
+  z-index: 5;
 }
