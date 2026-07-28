@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="theme-color" content="#141414" />
-<title>Suivi séries / animes</title>
+<title>Omnivore</title>
 <link rel="manifest" href="manifest.json" />
 <link rel="icon" href="icon-192.png" />
 <link rel="apple-touch-icon" href="icon-192.png" />
@@ -15,7 +15,7 @@
 <body>
 
 <header class="topbar">
-  <h1>📺 Suivi</h1>
+  <h1>📺 Omnivore</h1>
   <div class="topbar-actions">
     <button id="btn-refresh" class="icon-btn" title="Rafraîchir">⟳</button>
     <button id="btn-settings" class="icon-btn" title="Paramètres">⚙️</button>
@@ -59,15 +59,15 @@
       <div id="list-en-cours" class="card-list"></div>
     </section>
 
-    <section class="group">
-      <h2>Suivi</h2>
-      <div id="list-suivi" class="card-list"></div>
-    </section>
-
-    <section class="group">
-      <h2>À regarder</h2>
+    <details class="group group-collapsible">
+      <summary>À regarder</summary>
       <div id="list-a-regarder" class="card-list"></div>
-    </section>
+    </details>
+
+    <details class="group group-collapsible">
+      <summary>Terminé</summary>
+      <div id="list-termine" class="card-list"></div>
+    </details>
 
   </section>
 
@@ -90,8 +90,8 @@
     <h3 class="panel-label">Ajouter dans quelle liste ?</h3>
     <div class="status-choice">
       <button type="button" class="small-btn status-btn active" data-status="a_regarder">À regarder</button>
-      <button type="button" class="small-btn status-btn" data-status="suivi">Suivi</button>
       <button type="button" class="small-btn status-btn" data-status="en_cours">En cours</button>
+      <button type="button" class="small-btn status-btn" data-status="termine">Terminé</button>
     </div>
 
     <div class="search-row">
