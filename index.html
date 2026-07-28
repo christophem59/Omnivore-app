@@ -87,6 +87,13 @@
       <button type="button" class="type-btn" data-type="anime">Anime</button>
     </div>
 
+    <h3 class="panel-label">Ajouter dans quelle liste ?</h3>
+    <div class="status-choice">
+      <button type="button" class="small-btn status-btn active" data-status="a_regarder">À regarder</button>
+      <button type="button" class="small-btn status-btn" data-status="suivi">Suivi</button>
+      <button type="button" class="small-btn status-btn" data-status="en_cours">En cours</button>
+    </div>
+
     <div class="search-row">
       <input id="input-add-search" type="text" placeholder="Nom du titre..." autocomplete="off" />
       <button id="btn-add-search" class="small-btn">Chercher</button>
@@ -94,17 +101,7 @@
 
     <p id="add-search-status" class="hint"></p>
     <div id="add-results" class="result-list"></div>
-
-    <div id="add-confirm" class="hidden">
-      <h3>Ajouter à quelle liste ?</h3>
-      <div class="status-choice">
-        <button type="button" class="small-btn status-btn active" data-status="a_regarder">À regarder</button>
-        <button type="button" class="small-btn status-btn" data-status="suivi">Suivi</button>
-        <button type="button" class="small-btn status-btn" data-status="en_cours">En cours</button>
-      </div>
-      <button id="btn-add-confirm" class="primary-btn">Ajouter</button>
-      <p id="add-error" class="error hidden"></p>
-    </div>
+    <p id="add-error" class="error hidden"></p>
   </div>
 </div>
 
