@@ -1,6 +1,6 @@
 {
-  "name": "Suivi séries / animes",
-  "short_name": "Suivi",
+  "name": "Omnivore",
+  "short_name": "Omnivore",
   "description": "Suivi personnel de séries, animes et mangas",
   "start_url": "./index.html",
   "scope": "./",
