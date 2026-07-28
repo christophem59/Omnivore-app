@@ -86,6 +86,21 @@ function uniqueId(baseId, existingIds) {
   return id;
 }
 
+/** Un résultat de recherche est considéré "déjà dans la watchlist" si :
+ * - anime avec anilist_id épinglé des deux côtés : comparaison par id exact ;
+ * - sinon : même type + même search_title (insensible à la casse). */
+function isAlreadyAdded(result, items) {
+  return items.some((item) => {
+    if (result.anilist_id && item.anilist_id) {
+      return item.anilist_id === result.anilist_id;
+    }
+    return (
+      item.type === result.type &&
+      (item.search_title || "").trim().toLowerCase() === (result.search_title || "").trim().toLowerCase()
+    );
+  });
+}
+
 /* ------------------------------ Store GitHub ------------------------------ */
 
 class GitHubStore {
@@ -577,11 +592,23 @@ function initAddPanel() {
     errorEl.classList.add("hidden");
   }
 
+  function closePanel() {
+    overlay.classList.add("hidden");
+  }
+
   openBtn.addEventListener("click", () => {
     resetPanel();
     overlay.classList.remove("hidden");
   });
-  closeBtn.addEventListener("click", () => overlay.classList.add("hidden"));
+  closeBtn.addEventListener("click", closePanel);
+
+  // Clic sur le fond sombre (en dehors du panneau lui-même) = fermeture.
+  // On ne ferme que si le clic tombe directement sur l'overlay et pas sur
+  // un de ses enfants (le panneau et son contenu), donc pas besoin de
+  // stopPropagation ailleurs.
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) closePanel();
+  });
 
   typeButtons.forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -612,6 +639,8 @@ function initAddPanel() {
       resultsEl.innerHTML = "";
       for (const r of results) {
         const item = el("div", "result-item");
+        const already = isAlreadyAdded(r, watchlist.items);
+        if (already) item.classList.add("already-added");
 
         const img = document.createElement("img");
         img.src = r.image || "";
@@ -625,29 +654,39 @@ function initAddPanel() {
 
         // Icône "+" : ajoute directement ce résultat dans la liste choisie
         // en haut du panneau, sans étape de confirmation supplémentaire.
-        const addBtn = el("button", "result-add-btn", "+");
+        // Si le titre est déjà dans la watchlist, on affiche directement
+        // un "✓" non cliquable à la place, pour éviter les doublons.
+        const addBtn = el("button", "result-add-btn", already ? "✓" : "+");
         addBtn.type = "button";
-        addBtn.title = "Ajouter";
-        addBtn.addEventListener("click", async () => {
+
+        if (already) {
+          addBtn.classList.add("added");
           addBtn.disabled = true;
-          errorEl.classList.add("hidden");
-          try {
-            await addNewItem({
-              title: r.title,
-              type: r.type,
-              searchTitle: r.search_title,
-              anilistId: r.anilist_id,
-              status: currentStatus,
-            });
-            addBtn.textContent = "✓";
-            addBtn.classList.add("added");
-            await renderAll();
-          } catch (e) {
-            addBtn.disabled = false;
-            errorEl.textContent = e.message;
-            errorEl.classList.remove("hidden");
-          }
-        });
+          addBtn.title = "Déjà dans ta watchlist";
+        } else {
+          addBtn.title = "Ajouter";
+          addBtn.addEventListener("click", async () => {
+            addBtn.disabled = true;
+            errorEl.classList.add("hidden");
+            try {
+              await addNewItem({
+                title: r.title,
+                type: r.type,
+                searchTitle: r.search_title,
+                anilistId: r.anilist_id,
+                status: currentStatus,
+              });
+              addBtn.textContent = "✓";
+              addBtn.classList.add("added");
+              item.classList.add("already-added");
+              await renderAll();
+            } catch (e) {
+              addBtn.disabled = false;
+              errorEl.textContent = e.message;
+              errorEl.classList.remove("hidden");
+            }
+          });
+        }
         item.appendChild(addBtn);
 
         resultsEl.appendChild(item);
@@ -689,5 +728,6 @@ if (typeof module !== "undefined") {
     b64DecodeUnicode,
     slugify,
     uniqueId,
+    isAlreadyAdded,
   };
 }
