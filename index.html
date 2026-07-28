@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#141414" />
+<title>Suivi séries / animes</title>
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="icon-192.png" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <h1>📺 Suivi</h1>
+  <div class="topbar-actions">
+    <button id="btn-refresh" class="icon-btn" title="Rafraîchir">⟳</button>
+    <button id="btn-settings" class="icon-btn" title="Paramètres">⚙️</button>
+  </div>
+</header>
+
+<main id="app-root">
+
+  <section id="setup-screen" class="screen hidden">
+    <h2>Connexion à ton repo GitHub</h2>
+    <p class="hint">
+      Ces infos restent uniquement sur ton téléphone (stockées localement),
+      elles ne sont jamais envoyées ailleurs qu'à l'API GitHub.
+    </p>
+    <label>Nom d'utilisateur / organisation GitHub
+      <input id="input-owner" type="text" placeholder="ex: christophe-morelle" autocapitalize="off" autocomplete="off" />
+    </label>
+    <label>Nom du repo
+      <input id="input-repo" type="text" placeholder="ex: suivi-series" autocapitalize="off" autocomplete="off" />
+    </label>
+    <label>Branche
+      <input id="input-branch" type="text" value="main" autocapitalize="off" autocomplete="off" />
+    </label>
+    <label>Token d'accès personnel (fine-grained, permission Contents: Read and write)
+      <input id="input-token" type="password" placeholder="github_pat_..." autocomplete="off" />
+    </label>
+    <button id="btn-save-setup" class="primary-btn">Enregistrer et charger</button>
+    <p id="setup-error" class="error hidden"></p>
+  </section>
+
+  <section id="loading-screen" class="screen hidden">
+    <p>Chargement…</p>
+  </section>
+
+  <section id="main-screen" class="screen hidden">
+
+    <div id="load-error" class="error hidden"></div>
+
+    <section class="group">
+      <h2>En cours</h2>
+      <div id="list-en-cours" class="card-list"></div>
+    </section>
+
+    <section class="group">
+      <h2>Suivi</h2>
+      <div id="list-suivi" class="card-list"></div>
+    </section>
+
+    <section class="group">
+      <h2>À regarder</h2>
+      <div id="list-a-regarder" class="card-list"></div>
+    </section>
+
+  </section>
+
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
