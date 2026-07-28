@@ -1,4 +1,6 @@
-const CACHE_NAME = "suivi-shell-v1";
+// Incrémenter ce numéro à chaque changement du code de l'app force une
+// invalidation propre de l'ancien cache (voir activate ci-dessous).
+const CACHE_NAME = "suivi-shell-v2";
 const APP_SHELL = ["./", "./index.html", "./styles.css", "./app.js", "./manifest.json"];
 
 self.addEventListener("install", (event) => {
@@ -19,12 +21,22 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
-  // On ne met en cache que les fichiers de l'app (même origine). Les appels
-  // vers l'API GitHub / TVmaze / AniList doivent toujours aller chercher des
+  // On ne gère que les fichiers de l'app (même origine). Les appels vers
+  // l'API GitHub / TVmaze / AniList doivent toujours aller chercher des
   // données fraîches sur le réseau, jamais depuis le cache.
   if (url.origin !== self.location.origin) return;
 
+  // Réseau d'abord : sert toujours la dernière version du code dès qu'il y a
+  // du réseau, et met à jour le cache au passage. Le cache ne sert que de
+  // secours si le téléphone est hors-ligne. Ça évite de rester bloqué sur une
+  // vieille version de l'app après une mise à jour (ce qui vient de nous arriver).
   event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request))
+    fetch(event.request)
+      .then((resp) => {
+        const copy = resp.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+        return resp;
+      })
+      .catch(() => caches.match(event.request))
   );
 });
