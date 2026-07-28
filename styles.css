@@ -263,7 +263,6 @@ label input {
   border: 1px solid var(--card-border);
   border-radius: 10px;
   padding: 8px;
-  cursor: pointer;
   text-align: left;
 }
 .result-item img {
@@ -274,13 +273,31 @@ label input {
   background: #333;
   flex-shrink: 0;
 }
+.result-text { flex: 1; min-width: 0; }
 .result-item .result-title { font-size: 0.9rem; font-weight: 600; }
 .result-item .result-sub { font-size: 0.75rem; color: var(--text-dim); }
-.result-item.selected { border-color: var(--accent); }
 
-#add-confirm { margin-top: 16px; }
-#add-confirm h3 { font-size: 0.9rem; color: var(--text-dim); margin: 0 0 8px; }
-.status-choice { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.result-add-btn {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  color: white;
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.result-add-btn:active { transform: scale(0.95); }
+.result-add-btn.added {
+  background: var(--accent-2);
+  font-size: 1rem;
+}
+.result-add-btn:disabled { opacity: 0.7; cursor: default; }
+
+.panel-label { font-size: 0.9rem; color: var(--text-dim); margin: 0 0 8px; }
+.status-choice { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
 
 .card-delete {
   background: none;
