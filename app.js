@@ -1,7 +1,7 @@
 "use strict";
 
 /* =========================================================================
-   Suivi séries / animes — PWA
+   Omnivore — PWA de suivi séries / animes / mangas
    Lit/écrit directement le repo GitHub (watchlist.json, state.json,
    progress.json) via l'API GitHub Contents, avec un token personnel stocké
    uniquement dans le localStorage du téléphone.
@@ -13,6 +13,7 @@ const LS = {
   branch: "sv_branch",
   token: "sv_token",
   posterCache: "sv_poster_cache",
+  episodeCache: "sv_episode_cache",
 };
 
 /* ------------------------- Helpers purs (testables) ------------------------- */
@@ -39,7 +40,8 @@ function groupByStatus(items) {
 }
 
 /** Delta (nb d'épisodes de retard) uniquement calculable quand les deux
- * valeurs sont des compteurs absolus comparables (cas des animes). */
+ * valeurs sont des compteurs absolus comparables (cas des animes). Encore
+ * utilisé pour l'affichage des cartes "Terminé" (dernier épisode connu). */
 function computeDelta(progressEpisode, latestKnown) {
   if (typeof progressEpisode !== "number" || typeof latestKnown !== "number") {
     return null;
@@ -99,6 +101,154 @@ function isAlreadyAdded(result, items) {
       (item.search_title || "").trim().toLowerCase() === (result.search_title || "").trim().toLowerCase()
     );
   });
+}
+
+/* --------------------- Logique "prochain épisode" (pure) --------------------- */
+
+/** À partir de la liste complète des épisodes TVmaze (dans l'ordre renvoyé
+ * par l'API, qui est l'ordre de diffusion) et du nombre d'épisodes déjà
+ * marqués comme vus, déduit tout ce qu'il faut pour afficher la carte
+ * "prochain épisode" d'une série TV. `todayStr` est injecté (format
+ * "YYYY-MM-DD") pour que la fonction reste pure et testable.
+ *
+ * raw attendu : { episodes: [...], status: "Ended"|"Running"|..., streaming } */
+function deriveTvEpisodeInfo(raw, progressEpisode, todayStr) {
+  const episodes = raw.episodes || [];
+  const idx = progressEpisode; // 0-indexé : prochain épisode non vu
+
+  if (idx >= episodes.length) {
+    if (raw.status === "Ended") {
+      return { kind: "finished" };
+    }
+    return {
+      kind: "episode",
+      hasAired: false,
+      unknown: true,
+      season: null,
+      number: null,
+      name: null,
+      airdate: null,
+      summary: null,
+      streaming: raw.streaming || null,
+      extraBehind: 0,
+    };
+  }
+
+  const ep = episodes[idx];
+  const hasAired = !!ep.airdate && ep.airdate <= todayStr;
+  const airedCount = episodes.filter((e) => e.airdate && e.airdate <= todayStr).length;
+  const extraBehind = Math.max(0, airedCount - (idx + 1));
+
+  return {
+    kind: "episode",
+    hasAired,
+    unknown: false,
+    season: ep.season,
+    number: ep.number,
+    name: ep.name || null,
+    airdate: ep.airdate || null,
+    summary: ep.summary || null,
+    streaming: raw.streaming || null,
+    extraBehind,
+  };
+}
+
+/** Choisit, parmi les liens de streaming AniList (rarement structurés
+ * précisément par épisode), celui qui correspond au numéro d'épisode visé ;
+ * à défaut, le premier lien disponible (mieux que rien). */
+function pickAnimeStreaming(streamingEpisodesRaw, targetEpisode) {
+  if (!streamingEpisodesRaw || !streamingEpisodesRaw.length) return null;
+  const match = streamingEpisodesRaw.find((s) => {
+    const m = /episode\s*(\d+)/i.exec(s.title || "");
+    return m && parseInt(m[1], 10) === targetEpisode;
+  });
+  const chosen = match || streamingEpisodesRaw[0];
+  if (!chosen || !chosen.site) return null;
+  return { label: `Disponible en streaming sur ${chosen.site}`, url: chosen.url || null };
+}
+
+/** Équivalent anime de deriveTvEpisodeInfo. `nowSec` est injecté (secondes
+ * epoch) pour rester testable. raw attendu : { status, totalEpisodes,
+ * nextAiringEpisode, airingSchedule, streamingEpisodesRaw }. */
+function deriveAnimeEpisodeInfo(raw, progressEpisode, nowSec) {
+  const target = progressEpisode + 1;
+  const { status, totalEpisodes, nextAiringEpisode, airingSchedule, streamingEpisodesRaw } = raw;
+
+  if (typeof totalEpisodes === "number" && target > totalEpisodes) {
+    return { kind: "finished" };
+  }
+  if (!totalEpisodes && status === "FINISHED" && !nextAiringEpisode && progressEpisode > 0) {
+    return { kind: "finished" };
+  }
+
+  const scheduleNode = (airingSchedule || []).find((n) => n.episode === target);
+  let hasAired;
+  let airdate = null;
+
+  if (scheduleNode) {
+    hasAired = scheduleNode.airingAt <= nowSec;
+    airdate = scheduleNode.airingAt;
+  } else if (nextAiringEpisode && nextAiringEpisode.episode === target) {
+    hasAired = false;
+    airdate = nextAiringEpisode.airingAt;
+  } else if (nextAiringEpisode && target < nextAiringEpisode.episode) {
+    hasAired = true;
+  } else if (!nextAiringEpisode && status === "FINISHED") {
+    hasAired = true;
+  } else {
+    hasAired = false;
+  }
+
+  const airedCount = nextAiringEpisode
+    ? nextAiringEpisode.episode - 1
+    : status === "FINISHED" && totalEpisodes
+    ? totalEpisodes
+    : progressEpisode;
+  const extraBehind = Math.max(0, (airedCount || 0) - target);
+
+  return {
+    kind: "episode",
+    hasAired,
+    unknown: false,
+    season: null,
+    number: target,
+    name: null,
+    airdate,
+    summary: null, // pas de résumé par épisode disponible côté AniList
+    streaming: pickAnimeStreaming(streamingEpisodesRaw, target),
+    extraBehind,
+  };
+}
+
+/** Libellé "S01E05" (séries), "Épisode 5" (animes), ou libellé de secours
+ * pour les spéciaux / cas inconnus. */
+function formatEpisodeTag(itemType, info) {
+  if (info.unknown) return "Prochain épisode";
+  if (itemType === "tv") {
+    if (info.number === null || info.number === undefined) {
+      return info.season ? `Saison ${info.season} (spécial)` : "Épisode spécial";
+    }
+    return `S${String(info.season).padStart(2, "0")}E${String(info.number).padStart(2, "0")}`;
+  }
+  return `Épisode ${info.number}`;
+}
+
+/** Ligne d'affichage de la date de diffusion, avec gestion des cas où la
+ * date exacte n'est pas connue. `airdate` est soit une chaîne "YYYY-MM-DD"
+ * (TVmaze), soit un timestamp epoch en secondes (AniList), soit null. */
+function formatAirdateDisplay(info) {
+  if (info.unknown) return "Date inconnue pour l'instant";
+  if (info.airdate === null || info.airdate === undefined) {
+    return info.hasAired ? "Diffusé (date exacte inconnue)" : "À venir (date inconnue)";
+  }
+  let d;
+  if (typeof info.airdate === "number") {
+    d = new Date(info.airdate * 1000);
+  } else {
+    d = new Date(`${info.airdate}T00:00:00`);
+  }
+  const formatted = d.toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" });
+  return info.hasAired ? `Diffusé le ${formatted}` : `À venir le ${formatted}`;
 }
 
 /* ------------------------------ Store GitHub ------------------------------ */
@@ -205,6 +355,115 @@ async function getPoster(item) {
   return url;
 }
 
+/* ------------------------------ Données épisode (réseau + cache) ------------------------------ */
+
+function loadEpisodeCache() {
+  try {
+    return JSON.parse(localStorage.getItem(LS.episodeCache) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveEpisodeCache(cache) {
+  localStorage.setItem(LS.episodeCache, JSON.stringify(cache));
+}
+
+const EPISODE_TTL_MS = 6 * 60 * 60 * 1000; // 6h : assez frais pour les dates de diffusion
+
+/** Récupère (et met en cache) les données brutes nécessaires au calcul du
+ * "prochain épisode" pour un item TV. Épingle automatiquement tvmaze_id
+ * dans watchlist.json au passage si l'item ne l'avait pas encore (même
+ * esprit que l'épinglage manuel d'anilist_id, mais fait tout seul). */
+async function fetchTvRaw(item) {
+  let tvmazeId = item.tvmaze_id;
+  if (!tvmazeId) {
+    const resp = await fetch(`https://api.tvmaze.com/singlesearch/shows?q=${encodeURIComponent(item.search_title)}`);
+    if (!resp.ok) throw new Error(`TVmaze : recherche impossible pour ${item.display_title}`);
+    const show = await resp.json();
+    tvmazeId = show.id;
+    item.tvmaze_id = tvmazeId;
+    await store.putFile("watchlist.json", watchlist, `Épinglage tvmaze_id : ${item.id}`);
+  }
+
+  const resp2 = await fetch(`https://api.tvmaze.com/shows/${tvmazeId}?embed=episodes`);
+  if (!resp2.ok) throw new Error(`TVmaze : détails indisponibles pour ${item.display_title}`);
+  const show = await resp2.json();
+  const episodes = (show._embedded && show._embedded.episodes) || [];
+  const streaming = show.webChannel
+    ? { label: `Disponible en streaming sur ${show.webChannel.name}` }
+    : show.network
+    ? { label: `Diffusé sur ${show.network.name} (TV, pas forcément en streaming légal)` }
+    : null;
+
+  return { episodes, status: show.status, streaming };
+}
+
+/** Équivalent anime. Épingle anilist_id automatiquement si absent. */
+async function fetchAnimeRaw(item) {
+  const anilistId = item.anilist_id;
+  const query = `
+    query ($id: Int, $search: String) {
+      Media(id: $id, search: $search, type: ANIME) {
+        id
+        status
+        episodes
+        nextAiringEpisode { episode airingAt }
+        airingSchedule(perPage: 50) { nodes { episode airingAt } }
+        streamingEpisodes { title url site }
+      }
+    }`;
+  const variables = anilistId ? { id: anilistId } : { search: item.search_title };
+  const resp = await fetch("https://graphql.anilist.co", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, variables }),
+  });
+  if (!resp.ok) throw new Error(`AniList : indisponible pour ${item.display_title}`);
+  const payload = await resp.json();
+  const media = payload.data && payload.data.Media;
+  if (!media) throw new Error(`AniList : aucune fiche trouvée pour ${item.display_title}`);
+
+  if (!anilistId) {
+    item.anilist_id = media.id;
+    await store.putFile("watchlist.json", watchlist, `Épinglage anilist_id : ${item.id}`);
+  }
+
+  return {
+    status: media.status,
+    totalEpisodes: media.episodes,
+    nextAiringEpisode: media.nextAiringEpisode,
+    airingSchedule: (media.airingSchedule && media.airingSchedule.nodes) || [],
+    streamingEpisodesRaw: media.streamingEpisodes || [],
+  };
+}
+
+async function fetchRawEpisodeData(item, { forceRefresh } = {}) {
+  const cache = loadEpisodeCache();
+  const cached = cache[item.id];
+  if (!forceRefresh && cached && Date.now() - cached.ts < EPISODE_TTL_MS) {
+    return cached.data;
+  }
+  const data = item.type === "tv" ? await fetchTvRaw(item) : await fetchAnimeRaw(item);
+  const freshCache = loadEpisodeCache();
+  freshCache[item.id] = { data, ts: Date.now() };
+  saveEpisodeCache(freshCache);
+  return data;
+}
+
+/** Calcule les infos du prochain épisode à regarder pour un item "en cours",
+ * à partir des données réseau (éventuellement en cache) et de la
+ * progression actuelle stockée dans progress.json. */
+async function getNextEpisodeInfo(item, opts = {}) {
+  const raw = await fetchRawEpisodeData(item, opts);
+  const progressEpisode = (progress[item.id] && progress[item.id].episode) || 0;
+  if (item.type === "tv") {
+    const today = new Date().toISOString().slice(0, 10);
+    return deriveTvEpisodeInfo(raw, progressEpisode, today);
+  }
+  return deriveAnimeEpisodeInfo(raw, progressEpisode, Date.now() / 1000);
+}
+
 /* ------------------------------ Recherche (ajout de titre) ------------------------------ */
 
 /** Recherche TVmaze multi-résultats (contrairement à singlesearch utilisé
@@ -274,7 +533,21 @@ function el(tag, className, text) {
   return e;
 }
 
-async function buildCard(item) {
+/** Petit message de succès temporaire, en haut de l'écran. */
+function showToast(message) {
+  const toast = document.getElementById("toast");
+  if (!toast) return;
+  toast.textContent = message;
+  toast.classList.add("visible");
+  clearTimeout(showToast._timer);
+  showToast._timer = setTimeout(() => {
+    toast.classList.remove("visible");
+  }, 3500);
+}
+
+/** Carte "série" classique (affiches + statut), utilisée pour les sections
+ * À regarder et Terminé. La section En cours utilise buildEpisodeCard. */
+async function buildShowCard(item) {
   const card = el("div", "card");
 
   const img = el("img", "poster");
@@ -289,63 +562,7 @@ async function buildCard(item) {
 
   const stateEntry = state[item.id];
 
-  if (item.status === "en_cours") {
-    const latestLabel = item.type === "tv" ? formatTvLatest(stateEntry) : formatAnimeLatest(stateEntry);
-    body.appendChild(el("p", "card-sub", latestLabel));
-
-    const progEntry = progress[item.id] || { episode: 0 };
-    const row = el("div", "progress-row");
-    const input = document.createElement("input");
-    input.type = "number";
-    input.min = "0";
-    input.value = progEntry.episode;
-    row.appendChild(input);
-
-    const saveBtn = el("button", "small-btn", "Mettre à jour");
-    saveBtn.addEventListener("click", async () => {
-      const newVal = parseInt(input.value, 10);
-      if (Number.isNaN(newVal) || newVal < 0) return;
-      saveBtn.textContent = "…";
-      saveBtn.disabled = true;
-      try {
-        await updateProgress(item.id, newVal);
-      } catch (e) {
-        alert(e.message);
-      }
-      saveBtn.textContent = "Mettre à jour";
-      saveBtn.disabled = false;
-      renderAll();
-    });
-    row.appendChild(saveBtn);
-    body.appendChild(row);
-
-    if (item.type === "anime" && stateEntry) {
-      const delta = computeDelta(progEntry.episode, stateEntry.number);
-      if (delta !== null) {
-        const badge = el(
-          "span",
-          `badge ${delta > 0 ? "behind" : "uptodate"}`,
-          delta > 0 ? `En retard de ${delta}` : "À jour"
-        );
-        body.appendChild(badge);
-      }
-    }
-
-    const actions = el("div", "card-actions");
-    const finishBtn = el("button", "small-btn", "Terminé");
-    finishBtn.addEventListener("click", async () => {
-      finishBtn.disabled = true;
-      try {
-        await markFinished(item.id);
-        await renderAll();
-      } catch (e) {
-        alert(e.message);
-        finishBtn.disabled = false;
-      }
-    });
-    actions.appendChild(finishBtn);
-    body.appendChild(actions);
-  } else if (item.status === "a_regarder") {
+  if (item.status === "a_regarder") {
     body.appendChild(el("p", "card-sub", "Pas encore commencé"));
     const startBtn = el("button", "small-btn", "Commencer");
     startBtn.addEventListener("click", async () => {
@@ -397,19 +614,197 @@ async function buildCard(item) {
   return card;
 }
 
-async function renderList(containerId, items) {
+/** Carte "épisode à regarder" (section En cours). Façon TV Time : le bloc
+ * représente le prochain épisode non vu, pas la série dans son ensemble. */
+async function buildEpisodeCard(item) {
+  const card = el("div", "card episode-card");
+
+  let info;
+  try {
+    info = await getNextEpisodeInfo(item);
+  } catch (e) {
+    const body = el("div", "card-body");
+    body.appendChild(el("p", "card-title", item.display_title));
+    body.appendChild(el("p", "card-sub error-inline", `Impossible de récupérer les épisodes : ${e.message}`));
+    card.appendChild(body);
+    const deleteBtn = el("button", "card-delete", "🗑");
+    deleteBtn.title = "Retirer ce titre";
+    deleteBtn.addEventListener("click", async () => {
+      const ok = confirm(`Retirer "${item.display_title}" de la watchlist ?`);
+      if (!ok) return;
+      await removeItem(item.id);
+      await renderAll();
+    });
+    card.appendChild(deleteBtn);
+    return card;
+  }
+
+  if (info.kind === "finished") {
+    // La série n'a plus rien à proposer (bot ou API externe l'ont marquée
+    // "Ended"/"FINISHED" entre deux ouvertures de l'appli) : on ne bascule
+    // pas tout seul, on demande confirmation.
+    const img = el("img", "poster");
+    img.alt = item.display_title;
+    card.appendChild(img);
+    getPoster(item).then((url) => {
+      if (url) img.src = url;
+    });
+
+    const body = el("div", "card-body");
+    body.appendChild(el("p", "card-title", item.display_title));
+    body.appendChild(el("p", "card-sub", "Tu es à jour, et la série est terminée."));
+    const confirmBtn = el("button", "small-btn", "Marquer comme terminé");
+    confirmBtn.addEventListener("click", async () => {
+      confirmBtn.disabled = true;
+      try {
+        await markFinished(item.id);
+        showToast(`"${item.display_title}" terminé !`);
+        await renderAll();
+      } catch (e) {
+        alert(e.message);
+        confirmBtn.disabled = false;
+      }
+    });
+    body.appendChild(confirmBtn);
+    card.appendChild(body);
+
+    const deleteBtn = el("button", "card-delete", "🗑");
+    deleteBtn.title = "Retirer ce titre";
+    deleteBtn.addEventListener("click", async () => {
+      const ok = confirm(`Retirer "${item.display_title}" de la watchlist ?`);
+      if (!ok) return;
+      await removeItem(item.id);
+      await renderAll();
+    });
+    card.appendChild(deleteBtn);
+    return card;
+  }
+
+  if (!info.hasAired) card.classList.add("upcoming");
+
+  const img = el("img", "poster");
+  img.alt = item.display_title;
+  card.appendChild(img);
+  getPoster(item).then((url) => {
+    if (url) img.src = url;
+  });
+
+  const clickableArea = el("div", "card-body card-body-clickable");
+  clickableArea.appendChild(el("p", "card-title", item.display_title));
+
+  const tag = el("span", "badge episode-tag", formatEpisodeTag(item.type, info));
+  clickableArea.appendChild(tag);
+
+  clickableArea.appendChild(el("p", "card-sub", formatAirdateDisplay(info)));
+
+  if (info.extraBehind > 0) {
+    clickableArea.appendChild(el("span", "badge behind", `+${info.extraBehind} autres épisodes en attente`));
+  }
+
+  if (!info.unknown) {
+    clickableArea.addEventListener("click", () => openEpisodeModal(item, info));
+  }
+  card.appendChild(clickableArea);
+
+  const actions = el("div", "card-actions");
+
+  if (!info.unknown) {
+    const watchedBtn = el("button", "small-btn primary-inline", "✓ Vu");
+    watchedBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      watchedBtn.disabled = true;
+      try {
+        await markEpisodeWatched(item);
+      } catch (err) {
+        alert(err.message);
+        watchedBtn.disabled = false;
+      }
+    });
+    actions.appendChild(watchedBtn);
+  }
+
+  const adjustBtn = el("button", "small-btn", "✎ Ajuster");
+  adjustBtn.title = "Corriger manuellement le numéro d'épisode vu";
+  adjustBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const current = (progress[item.id] && progress[item.id].episode) || 0;
+    const value = prompt("Dernier épisode vu (nombre) :", String(current));
+    if (value === null) return;
+    const parsed = parseInt(value, 10);
+    if (Number.isNaN(parsed) || parsed < 0) return;
+    updateProgress(item.id, parsed)
+      .then(renderAll)
+      .catch((err) => alert(err.message));
+  });
+  actions.appendChild(adjustBtn);
+
+  card.appendChild(actions);
+
+  const deleteBtn = el("button", "card-delete", "🗑");
+  deleteBtn.title = "Retirer ce titre";
+  deleteBtn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const ok = confirm(`Retirer "${item.display_title}" de la watchlist ?`);
+    if (!ok) return;
+    deleteBtn.disabled = true;
+    try {
+      await removeItem(item.id);
+      await renderAll();
+    } catch (err) {
+      alert(err.message);
+      deleteBtn.disabled = false;
+    }
+  });
+  card.appendChild(deleteBtn);
+
+  return card;
+}
+
+function openEpisodeModal(item, info) {
+  const modal = document.getElementById("episode-modal");
+  const posterEl = document.getElementById("episode-modal-poster");
+  const titleEl = document.getElementById("episode-modal-title");
+  const tagEl = document.getElementById("episode-modal-tag");
+  const airdateEl = document.getElementById("episode-modal-airdate");
+  const summaryEl = document.getElementById("episode-modal-summary");
+  const streamingEl = document.getElementById("episode-modal-streaming");
+
+  titleEl.textContent = item.display_title;
+  tagEl.textContent = formatEpisodeTag(item.type, info);
+  airdateEl.textContent = formatAirdateDisplay(info);
+
+  if (item.type === "tv" && info.summary) {
+    // Le résumé TVmaze est du HTML simple (souvent juste des <p>).
+    summaryEl.innerHTML = info.summary;
+    summaryEl.classList.remove("hidden");
+  } else {
+    summaryEl.textContent = "";
+    summaryEl.classList.add("hidden");
+  }
+
+  streamingEl.textContent = info.streaming ? info.streaming.label : "Streaming légal : non disponible";
+
+  posterEl.src = "";
+  getPoster(item).then((url) => {
+    if (url) posterEl.src = url;
+  });
+
+  modal.classList.remove("hidden");
+}
+
+async function renderList(containerId, items, builder) {
   const container = document.getElementById(containerId);
   container.innerHTML = "";
   for (const item of items) {
-    container.appendChild(await buildCard(item));
+    container.appendChild(await builder(item));
   }
 }
 
 async function renderAll() {
   const groups = groupByStatus(watchlist.items);
-  await renderList("list-en-cours", groups.en_cours);
-  await renderList("list-a-regarder", groups.a_regarder);
-  await renderList("list-termine", groups.termine);
+  await renderList("list-en-cours", groups.en_cours, buildEpisodeCard);
+  await renderList("list-a-regarder", groups.a_regarder, buildShowCard);
+  await renderList("list-termine", groups.termine, buildShowCard);
 }
 
 /* ------------------------------ Actions ------------------------------ */
@@ -444,6 +839,32 @@ async function resumeWatching(itemId) {
   if (!item) return;
   item.status = "en_cours";
   await store.putFile("watchlist.json", watchlist, `Statut : ${itemId} -> en_cours (repris)`);
+}
+
+/** Marque l'épisode actuellement affiché comme vu (bouton "✓ Vu" de la
+ * carte épisode) : incrémente la progression, puis regarde ce que ça donne
+ * pour la suite (encore un épisode connu ? à jour mais série vivante ?
+ * série terminée ?) pour décider du message de succès et d'un éventuel
+ * changement de statut. */
+async function markEpisodeWatched(item) {
+  const raw = await fetchRawEpisodeData(item); // pas de refetch réseau : la donnée brute ne dépend pas de la progression
+  const newEpisode = ((progress[item.id] && progress[item.id].episode) || 0) + 1;
+  progress[item.id] = { episode: newEpisode };
+  await store.putFile("progress.json", progress, `Progression : ${item.id} -> épisode ${newEpisode}`);
+
+  const info =
+    item.type === "tv"
+      ? deriveTvEpisodeInfo(raw, newEpisode, new Date().toISOString().slice(0, 10))
+      : deriveAnimeEpisodeInfo(raw, newEpisode, Date.now() / 1000);
+
+  if (info.kind === "finished") {
+    await markFinished(item.id);
+    showToast(`"${item.display_title}" terminé !`);
+  } else if (!info.hasAired) {
+    showToast(`À jour sur "${item.display_title}" !`);
+  }
+
+  await renderAll();
 }
 
 /** Ajoute un nouveau titre à la watchlist (résultat de recherche + statut
@@ -568,6 +989,15 @@ function initSetupScreen() {
   });
 }
 
+function initEpisodeModal() {
+  const modal = document.getElementById("episode-modal");
+  const closeBtn = document.getElementById("btn-episode-modal-close");
+  closeBtn.addEventListener("click", () => modal.classList.add("hidden"));
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) modal.classList.add("hidden");
+  });
+}
+
 /* ------------------------------ Panneau d'ajout ------------------------------ */
 
 function initAddPanel() {
@@ -603,9 +1033,6 @@ function initAddPanel() {
   closeBtn.addEventListener("click", closePanel);
 
   // Clic sur le fond sombre (en dehors du panneau lui-même) = fermeture.
-  // On ne ferme que si le clic tombe directement sur l'overlay et pas sur
-  // un de ses enfants (le panneau et son contenu), donc pas besoin de
-  // stopPropagation ailleurs.
   overlay.addEventListener("click", (e) => {
     if (e.target === overlay) closePanel();
   });
@@ -703,6 +1130,7 @@ if (typeof document !== "undefined") {
   document.addEventListener("DOMContentLoaded", () => {
     initSetupScreen();
     initAddPanel();
+    initEpisodeModal();
 
     document.getElementById("btn-refresh").addEventListener("click", boot);
     document.getElementById("btn-settings").addEventListener("click", () => {
@@ -729,5 +1157,10 @@ if (typeof module !== "undefined") {
     slugify,
     uniqueId,
     isAlreadyAdded,
+    deriveTvEpisodeInfo,
+    deriveAnimeEpisodeInfo,
+    pickAnimeStreaming,
+    formatEpisodeTag,
+    formatAirdateDisplay,
   };
 }
