@@ -118,23 +118,12 @@ function deriveTvEpisodeInfo(raw, progressEpisode, todayStr) {
   const airedCount = episodes.filter((e) => e.airdate && e.airdate <= todayStr).length;
 
   if (idx >= episodes.length) {
-    if (raw.status === "Ended") {
-      return { kind: "finished", airedCount, totalCount: episodes.length };
-    }
-    return {
-      kind: "episode",
-      hasAired: false,
-      unknown: true,
-      season: null,
-      number: null,
-      name: null,
-      airdate: null,
-      summary: null,
-      streaming: raw.streaming || null,
-      extraBehind: 0,
-      airedCount,
-      totalCount: episodes.length,
-    };
+    // Plus aucun épisode connu au-delà de ce qu'on a déjà vu : qu'il s'agisse
+    // d'une série officiellement "Ended" ou d'une série "Running"/"To Be
+    // Determined" dont TVmaze n'a pas encore listé de suite, on considère
+    // qu'on est à jour et on propose de la marquer terminée (confirmation
+    // manuelle côté UI, pas de bascule automatique).
+    return { kind: "finished", airedCount, totalCount: episodes.length };
   }
 
   const ep = episodes[idx];
@@ -168,7 +157,7 @@ function pickAnimeStreaming(streamingEpisodesRaw, targetEpisode) {
   });
   const chosen = match || streamingEpisodesRaw[0];
   if (!chosen || !chosen.site) return null;
-  return { label: `Disponible en streaming sur ${chosen.site}`, url: chosen.url || null };
+  return { name: chosen.site, kind: "streaming", url: chosen.url || null };
 }
 
 /** Équivalent anime de deriveTvEpisodeInfo. `nowSec` est injecté (secondes
@@ -255,6 +244,36 @@ function formatAirdateDisplay(info) {
   }
   const formatted = d.toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" });
   return info.hasAired ? `Diffusé le ${formatted}` : `À venir le ${formatted}`;
+}
+
+/** Correspondance nom de service -> icône (Simple Icons, CDN gratuit et
+ * sans clé : https://cdn.simpleicons.org/<slug>/<couleur-hex>). Recherche
+ * par sous-chaîne insensible à la casse, pour absorber les variantes de
+ * nom renvoyées par TVmaze ("Amazon", "Prime Video"...) ou AniList
+ * ("Crunchyroll", "Netflix"...). Liste volontairement limitée aux services
+ * les plus courants ; les autres retombent sur un badge texte (voir
+ * openEpisodeModal). */
+const STREAMING_ICON_MAP = [
+  { match: "netflix", slug: "netflix", color: "E50914" },
+  { match: "disney", slug: "disneyplus", color: "113CCF" },
+  { match: "amazon", slug: "primevideo", color: "1F2E4A" },
+  { match: "prime video", slug: "primevideo", color: "1F2E4A" },
+  { match: "hulu", slug: "hulu", color: "1CE783" },
+  { match: "crunchyroll", slug: "crunchyroll", color: "F47521" },
+  { match: "funimation", slug: "funimation", color: "5B0BB5" },
+  { match: "apple", slug: "appletv", color: "000000" },
+  { match: "paramount", slug: "paramountplus", color: "0064FF" },
+  { match: "peacock", slug: "peacock", color: "000000" },
+  { match: "hbo", slug: "hbo", color: "8B5CF6" },
+  { match: "max", slug: "max", color: "002BE7" },
+  { match: "youtube", slug: "youtube", color: "FF0000" },
+];
+
+function getStreamingIcon(serviceName) {
+  if (!serviceName) return null;
+  const lower = serviceName.toLowerCase();
+  const found = STREAMING_ICON_MAP.find((entry) => lower.includes(entry.match));
+  return found ? { slug: found.slug, color: found.color } : null;
 }
 
 /* ------------------------------ Store GitHub ------------------------------ */
@@ -397,9 +416,9 @@ async function fetchTvRaw(item) {
   const show = await resp2.json();
   const episodes = (show._embedded && show._embedded.episodes) || [];
   const streaming = show.webChannel
-    ? { label: `Disponible en streaming sur ${show.webChannel.name}` }
+    ? { name: show.webChannel.name, kind: "streaming" }
     : show.network
-    ? { label: `Diffusé sur ${show.network.name} (TV, pas forcément en streaming légal)` }
+    ? { name: show.network.name, kind: "broadcast" }
     : null;
 
   return { episodes, status: show.status, streaming };
@@ -815,7 +834,32 @@ function openEpisodeModal(item, info) {
     summaryEl.classList.add("hidden");
   }
 
-  streamingEl.textContent = info.streaming ? info.streaming.label : "Streaming légal : non disponible";
+  streamingEl.innerHTML = "";
+  if (info.streaming) {
+    const prefix = info.streaming.kind === "broadcast" ? "Diffusé sur : " : "Disponible sur : ";
+    streamingEl.appendChild(document.createTextNode(prefix));
+
+    const icon = getStreamingIcon(info.streaming.name);
+    if (icon) {
+      const img = document.createElement("img");
+      img.className = "streaming-logo";
+      img.src = `https://cdn.simpleicons.org/${icon.slug}/${icon.color}`;
+      img.alt = info.streaming.name;
+      img.title = info.streaming.name;
+      img.onerror = () => {
+        const fallback = el("span", "streaming-fallback", info.streaming.name);
+        fallback.title = info.streaming.name;
+        img.replaceWith(fallback);
+      };
+      streamingEl.appendChild(img);
+    } else {
+      const fallback = el("span", "streaming-fallback", info.streaming.name);
+      fallback.title = info.streaming.name;
+      streamingEl.appendChild(fallback);
+    }
+  } else {
+    streamingEl.textContent = "Streaming légal : non disponible";
+  }
 
   posterEl.src = "";
   getPoster(item).then((url) => {
@@ -1195,5 +1239,6 @@ if (typeof module !== "undefined") {
     pickAnimeStreaming,
     formatEpisodeTag,
     formatAirdateDisplay,
+    getStreamingIcon,
   };
 }
