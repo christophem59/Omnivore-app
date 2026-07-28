@@ -290,6 +290,12 @@ label input {
 .result-item .result-title { font-size: 0.9rem; font-weight: 600; }
 .result-item .result-sub { font-size: 0.75rem; color: var(--text-dim); }
 
+/* Résultat déjà présent dans la watchlist : encadré vert, cohérent avec
+   le bouton "✓" désactivé qui remplace le "+". */
+.result-item.already-added {
+  border-color: var(--accent-2);
+}
+
 .result-add-btn {
   flex-shrink: 0;
   width: 36px;
