@@ -550,7 +550,7 @@ function flashWatched(cardEl) {
     badge.textContent = "✓";
     cardEl.appendChild(badge);
     cardEl.classList.add("watched-flash");
-    setTimeout(resolve, 480);
+    setTimeout(resolve, 950);
   });
 }
 
