@@ -31,7 +31,7 @@ function b64DecodeUnicode(b64) {
 }
 
 function groupByStatus(items) {
-  const groups = { en_cours: [], suivi: [], a_regarder: [] };
+  const groups = { en_cours: [], a_regarder: [], termine: [] };
   for (const item of items) {
     if (groups[item.status]) groups[item.status].push(item);
   }
@@ -315,9 +315,21 @@ async function buildCard(item) {
         body.appendChild(badge);
       }
     }
-  } else if (item.status === "suivi") {
-    const latestLabel = item.type === "tv" ? formatTvLatest(stateEntry) : formatAnimeLatest(stateEntry);
-    body.appendChild(el("p", "card-sub", latestLabel));
+
+    const actions = el("div", "card-actions");
+    const finishBtn = el("button", "small-btn", "Terminé");
+    finishBtn.addEventListener("click", async () => {
+      finishBtn.disabled = true;
+      try {
+        await markFinished(item.id);
+        await renderAll();
+      } catch (e) {
+        alert(e.message);
+        finishBtn.disabled = false;
+      }
+    });
+    actions.appendChild(finishBtn);
+    body.appendChild(actions);
   } else if (item.status === "a_regarder") {
     body.appendChild(el("p", "card-sub", "Pas encore commencé"));
     const startBtn = el("button", "small-btn", "Commencer");
@@ -332,6 +344,21 @@ async function buildCard(item) {
       renderAll();
     });
     body.appendChild(startBtn);
+  } else if (item.status === "termine") {
+    const latestLabel = item.type === "tv" ? formatTvLatest(stateEntry) : formatAnimeLatest(stateEntry);
+    body.appendChild(el("p", "card-sub", latestLabel));
+    const resumeBtn = el("button", "small-btn", "Reprendre");
+    resumeBtn.addEventListener("click", async () => {
+      resumeBtn.disabled = true;
+      try {
+        await resumeWatching(item.id);
+        await renderAll();
+      } catch (e) {
+        alert(e.message);
+        resumeBtn.disabled = false;
+      }
+    });
+    body.appendChild(resumeBtn);
   }
 
   card.appendChild(body);
@@ -366,8 +393,8 @@ async function renderList(containerId, items) {
 async function renderAll() {
   const groups = groupByStatus(watchlist.items);
   await renderList("list-en-cours", groups.en_cours);
-  await renderList("list-suivi", groups.suivi);
   await renderList("list-a-regarder", groups.a_regarder);
+  await renderList("list-termine", groups.termine);
 }
 
 /* ------------------------------ Actions ------------------------------ */
@@ -384,6 +411,24 @@ async function startWatching(itemId) {
   await store.putFile("watchlist.json", watchlist, `Statut : ${itemId} -> en_cours`);
   progress[itemId] = { episode: 0 };
   await store.putFile("progress.json", progress, `Progression : ${itemId} initialisée`);
+}
+
+/** Bascule un titre "en cours" vers "terminé" (ne touche pas à sa
+ * progression, qui reste consultable si jamais on reprend plus tard). */
+async function markFinished(itemId) {
+  const item = watchlist.items.find((i) => i.id === itemId);
+  if (!item) return;
+  item.status = "termine";
+  await store.putFile("watchlist.json", watchlist, `Statut : ${itemId} -> terminé`);
+}
+
+/** Fait l'inverse : un titre "terminé" redevient "en cours" (ex. on
+ * recommence la série, ou une nouvelle saison sort). */
+async function resumeWatching(itemId) {
+  const item = watchlist.items.find((i) => i.id === itemId);
+  if (!item) return;
+  item.status = "en_cours";
+  await store.putFile("watchlist.json", watchlist, `Statut : ${itemId} -> en_cours (repris)`);
 }
 
 /** Ajoute un nouveau titre à la watchlist (résultat de recherche + statut
