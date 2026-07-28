@@ -62,6 +62,30 @@ function formatAnimeLatest(stateEntry) {
   return `Dernier diffusé : épisode ${stateEntry.number}`;
 }
 
+/** Même logique que scripts/import_csv.py côté Python : id lisible et
+ * stable dérivé du titre affiché. */
+function slugify(text) {
+  return text
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "") // retire les accents isolés par NFKD
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-+|-+$)/g, "");
+}
+
+/** Ajoute un suffixe -2, -3... si l'id existe déjà, pour ne jamais écraser
+ * une entrée existante en cas de titre proche/dupliqué. */
+function uniqueId(baseId, existingIds) {
+  let id = baseId;
+  let n = 2;
+  while (existingIds.has(id)) {
+    id = `${baseId}-${n}`;
+    n++;
+  }
+  return id;
+}
+
 /* ------------------------------ Store GitHub ------------------------------ */
 
 class GitHubStore {
@@ -166,6 +190,59 @@ async function getPoster(item) {
   return url;
 }
 
+/* ------------------------------ Recherche (ajout de titre) ------------------------------ */
+
+/** Recherche TVmaze multi-résultats (contrairement à singlesearch utilisé
+ * ailleurs, qui ne renvoie qu'un seul "meilleur" résultat). */
+async function searchTvmazeMulti(query) {
+  const resp = await fetch(`https://api.tvmaze.com/search/shows?q=${encodeURIComponent(query)}`);
+  if (!resp.ok) return [];
+  const data = await resp.json();
+  return data.slice(0, 8).map((entry) => ({
+    type: "tv",
+    title: entry.show.name,
+    search_title: entry.show.name,
+    year: entry.show.premiered ? entry.show.premiered.slice(0, 4) : "",
+    image: entry.show.image ? entry.show.image.medium : null,
+    status: entry.show.status,
+  }));
+}
+
+/** Recherche AniList multi-résultats via Page(media:...), pour laisser
+ * choisir la bonne fiche parmi plusieurs saisons/films/OVA homonymes. */
+async function searchAnilistMulti(query) {
+  const q = `
+    query ($search: String) {
+      Page(page: 1, perPage: 8) {
+        media(search: $search, type: ANIME) {
+          id
+          title { romaji english }
+          coverImage { medium }
+          status
+          episodes
+          seasonYear
+        }
+      }
+    }`;
+  const resp = await fetch("https://graphql.anilist.co", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query: q, variables: { search: query } }),
+  });
+  if (!resp.ok) return [];
+  const payload = await resp.json();
+  const list = (payload.data && payload.data.Page && payload.data.Page.media) || [];
+  return list.map((m) => ({
+    type: "anime",
+    title: m.title.romaji || m.title.english,
+    search_title: m.title.romaji || m.title.english,
+    anilist_id: m.id,
+    year: m.seasonYear || "",
+    image: m.coverImage ? m.coverImage.medium : null,
+    status: m.status,
+  }));
+}
+
 /* ------------------------------ App state ------------------------------ */
 
 let store = null;
@@ -258,6 +335,23 @@ async function buildCard(item) {
   }
 
   card.appendChild(body);
+
+  const deleteBtn = el("button", "card-delete", "🗑");
+  deleteBtn.title = "Retirer ce titre";
+  deleteBtn.addEventListener("click", async () => {
+    const ok = confirm(`Retirer "${item.display_title}" de la watchlist ?`);
+    if (!ok) return;
+    deleteBtn.disabled = true;
+    try {
+      await removeItem(item.id);
+      await renderAll();
+    } catch (e) {
+      alert(e.message);
+      deleteBtn.disabled = false;
+    }
+  });
+  card.appendChild(deleteBtn);
+
   return card;
 }
 
@@ -290,6 +384,45 @@ async function startWatching(itemId) {
   await store.putFile("watchlist.json", watchlist, `Statut : ${itemId} -> en_cours`);
   progress[itemId] = { episode: 0 };
   await store.putFile("progress.json", progress, `Progression : ${itemId} initialisée`);
+}
+
+/** Ajoute un nouveau titre à la watchlist (résultat de recherche + statut
+ * choisis par l'utilisateur dans le panneau d'ajout). */
+async function addNewItem({ title, type, searchTitle, anilistId, status }) {
+  const existingIds = new Set(watchlist.items.map((i) => i.id));
+  const id = uniqueId(slugify(title), existingIds);
+
+  const newItem = {
+    id,
+    display_title: title,
+    search_title: searchTitle,
+    type,
+    status,
+  };
+  if (anilistId) newItem.anilist_id = anilistId;
+
+  watchlist.items.push(newItem);
+  await store.putFile("watchlist.json", watchlist, `Ajout : ${title}`);
+
+  if (status === "en_cours") {
+    progress[id] = { episode: 0 };
+    await store.putFile("progress.json", progress, `Progression : ${id} initialisée`);
+  }
+
+  return id;
+}
+
+/** Retire un titre de la watchlist et nettoie sa progression associée
+ * (l'entrée dans state.json, elle, reste orpheline mais inoffensive :
+ * le bot de notif ne regarde que les ids présents dans watchlist.json). */
+async function removeItem(itemId) {
+  watchlist.items = watchlist.items.filter((i) => i.id !== itemId);
+  await store.putFile("watchlist.json", watchlist, `Suppression : ${itemId}`);
+
+  if (progress[itemId]) {
+    delete progress[itemId];
+    await store.putFile("progress.json", progress, `Suppression progression : ${itemId}`);
+  }
 }
 
 /* ------------------------------ Bootstrap / setup ------------------------------ */
@@ -375,11 +508,123 @@ function initSetupScreen() {
   });
 }
 
+/* ------------------------------ Panneau d'ajout ------------------------------ */
+
+function initAddPanel() {
+  const overlay = document.getElementById("add-overlay");
+  const openBtn = document.getElementById("btn-add");
+  const closeBtn = document.getElementById("btn-add-close");
+  const typeButtons = document.querySelectorAll(".type-btn");
+  const searchInput = document.getElementById("input-add-search");
+  const searchBtn = document.getElementById("btn-add-search");
+  const statusEl = document.getElementById("add-search-status");
+  const resultsEl = document.getElementById("add-results");
+  const confirmBox = document.getElementById("add-confirm");
+  const statusButtons = document.querySelectorAll(".status-btn");
+  const confirmBtn = document.getElementById("btn-add-confirm");
+  const errorEl = document.getElementById("add-error");
+
+  let currentType = "tv";
+  let currentStatus = "a_regarder";
+  let selectedResult = null;
+
+  function resetPanel() {
+    searchInput.value = "";
+    statusEl.textContent = "";
+    resultsEl.innerHTML = "";
+    confirmBox.classList.add("hidden");
+    errorEl.classList.add("hidden");
+    selectedResult = null;
+  }
+
+  openBtn.addEventListener("click", () => {
+    resetPanel();
+    overlay.classList.remove("hidden");
+  });
+  closeBtn.addEventListener("click", () => overlay.classList.add("hidden"));
+
+  typeButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      typeButtons.forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      currentType = btn.dataset.type;
+    });
+  });
+
+  statusButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      statusButtons.forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      currentStatus = btn.dataset.status;
+    });
+  });
+
+  searchBtn.addEventListener("click", async () => {
+    const query = searchInput.value.trim();
+    if (!query) return;
+    statusEl.textContent = "Recherche…";
+    resultsEl.innerHTML = "";
+    confirmBox.classList.add("hidden");
+
+    try {
+      const results = currentType === "tv" ? await searchTvmazeMulti(query) : await searchAnilistMulti(query);
+      statusEl.textContent = results.length ? `${results.length} résultat(s)` : "Aucun résultat.";
+      resultsEl.innerHTML = "";
+      for (const r of results) {
+        const item = el("div", "result-item");
+        const img = document.createElement("img");
+        img.src = r.image || "";
+        img.alt = r.title;
+        item.appendChild(img);
+        const textWrap = el("div");
+        textWrap.appendChild(el("p", "result-title", r.title));
+        textWrap.appendChild(el("p", "result-sub", `${r.year || ""} ${r.status ? "· " + r.status : ""}`.trim()));
+        item.appendChild(textWrap);
+
+        item.addEventListener("click", () => {
+          document.querySelectorAll(".result-item.selected").forEach((n) => n.classList.remove("selected"));
+          item.classList.add("selected");
+          selectedResult = r;
+          confirmBox.classList.remove("hidden");
+        });
+
+        resultsEl.appendChild(item);
+      }
+    } catch (e) {
+      statusEl.textContent = `Erreur de recherche : ${e.message}`;
+    }
+  });
+
+  confirmBtn.addEventListener("click", async () => {
+    if (!selectedResult) return;
+    errorEl.classList.add("hidden");
+    confirmBtn.textContent = "…";
+    confirmBtn.disabled = true;
+    try {
+      await addNewItem({
+        title: selectedResult.title,
+        type: selectedResult.type,
+        searchTitle: selectedResult.search_title,
+        anilistId: selectedResult.anilist_id,
+        status: currentStatus,
+      });
+      overlay.classList.add("hidden");
+      await renderAll();
+    } catch (e) {
+      errorEl.textContent = e.message;
+      errorEl.classList.remove("hidden");
+    }
+    confirmBtn.textContent = "Ajouter";
+    confirmBtn.disabled = false;
+  });
+}
+
 /* Le bootstrap réel ne s'exécute que dans un navigateur (pas lors des
    tests Node, où `document` n'existe pas). */
 if (typeof document !== "undefined") {
   document.addEventListener("DOMContentLoaded", () => {
     initSetupScreen();
+    initAddPanel();
 
     document.getElementById("btn-refresh").addEventListener("click", boot);
     document.getElementById("btn-settings").addEventListener("click", () => {
@@ -396,5 +641,14 @@ if (typeof document !== "undefined") {
 
 /* Exposé pour les tests Node (ignoré dans le navigateur) */
 if (typeof module !== "undefined") {
-  module.exports = { groupByStatus, computeDelta, formatTvLatest, formatAnimeLatest, b64EncodeUnicode, b64DecodeUnicode };
+  module.exports = {
+    groupByStatus,
+    computeDelta,
+    formatTvLatest,
+    formatAnimeLatest,
+    b64EncodeUnicode,
+    b64DecodeUnicode,
+    slugify,
+    uniqueId,
+  };
 }
