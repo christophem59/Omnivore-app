@@ -14,6 +14,8 @@
 </head>
 <body>
 
+<div id="toast" class="toast"></div>
+
 <header class="topbar">
   <h1>📺 Omnivore</h1>
   <div class="topbar-actions">
@@ -102,6 +104,21 @@
     <p id="add-search-status" class="hint"></p>
     <div id="add-results" class="result-list"></div>
     <p id="add-error" class="error hidden"></p>
+  </div>
+</div>
+
+<div id="episode-modal" class="overlay hidden">
+  <div class="overlay-panel">
+    <div class="overlay-header">
+      <h2 id="episode-modal-title">Détails</h2>
+      <button id="btn-episode-modal-close" class="icon-btn" title="Fermer">✕</button>
+    </div>
+
+    <img id="episode-modal-poster" class="episode-modal-poster" alt="" />
+    <span id="episode-modal-tag" class="badge episode-tag"></span>
+    <p id="episode-modal-airdate" class="hint"></p>
+    <p id="episode-modal-summary" class="hint episode-modal-summary hidden"></p>
+    <p id="episode-modal-streaming" class="hint"></p>
   </div>
 </div>
 
