@@ -11,7 +11,7 @@ Rien actuellement.
 ### 1. Fonctionnalités transverses
 
 - Vue "cette semaine" façon calendrier.
-- En plus des services de streaming, afficher les ratings (séries, anime, manga...) dans la modale de détail, et aussi dans les résultats de recherche du panneau d'ajout.
+- Afficher les ratings dans les résultats de recherche du panneau d'ajout (partie modale de détail traitée séparément, à confirmer avant de la considérer faite).
 
 ### 2. Extension du périmètre
 

@@ -722,8 +722,16 @@ async function fetchTvRaw(item) {
     : show.network
     ? { name: show.network.name, kind: "broadcast" }
     : null;
+  const rating = show.rating && show.rating.average != null ? show.rating.average : null;
 
-  return { episodes, status: show.status, streaming, summary: show.summary || null, ended: show.ended || null };
+  return {
+    episodes,
+    status: show.status,
+    streaming,
+    summary: show.summary || null,
+    ended: show.ended || null,
+    rating,
+  };
 }
 
 /** Requête AniList brute pour une seule fiche (une saison), par id ou par
@@ -739,6 +747,7 @@ async function queryAnilistMedia({ id, search, label }) {
         episodes
         description
         seasonYear
+        averageScore
         endDate { year month day }
         nextAiringEpisode { episode airingAt }
         airingSchedule(perPage: 50) { nodes { episode airingAt } }
@@ -764,6 +773,7 @@ function mapAnilistMediaToRaw(media) {
     totalEpisodes: media.episodes,
     description: media.description || null,
     seasonYear: media.seasonYear || null,
+    rating: media.averageScore != null ? media.averageScore : null,
     endDate: media.endDate || null,
     nextAiringEpisode: media.nextAiringEpisode,
     airingSchedule: (media.airingSchedule && media.airingSchedule.nodes) || [],
@@ -835,6 +845,7 @@ async function fetchAnimeRawGrouped(item) {
     status: last.status,
     totalEpisodes: offsetReliable ? offset : null,
     description: last.description,
+    rating: last.rating,
     endDate: last.status === "FINISHED" ? last.endDate : null,
     nextAiringEpisode,
     airingSchedule,
@@ -917,6 +928,7 @@ async function searchTvmazeMulti(query) {
     year: entry.show.premiered ? entry.show.premiered.slice(0, 4) : "",
     image: entry.show.image ? entry.show.image.medium : null,
     status: entry.show.status,
+    rating: entry.show.rating && entry.show.rating.average != null ? entry.show.rating.average : null,
   }));
 }
 
@@ -933,6 +945,7 @@ async function searchAnilistMulti(query) {
           status
           episodes
           seasonYear
+          averageScore
         }
       }
     }`;
@@ -950,9 +963,19 @@ async function searchAnilistMulti(query) {
     search_title: m.title.romaji || m.title.english,
     anilist_id: m.id,
     year: m.seasonYear || "",
+    rating: m.averageScore != null ? m.averageScore : null,
     image: m.coverImage ? m.coverImage.medium : null,
     status: m.status,
   }));
+}
+
+/** Note à afficher sous un résultat de recherche (panneau d'ajout / mini-
+ * recherche d'ajout de saison), même échelle par source que
+ * formatRatingLabel mais sans le nom de la source (déjà évident ici, tout
+ * est côté TVmaze ou AniList selon l'onglet Série/Anime choisi). */
+function formatSearchResultRating(r) {
+  if (r.rating == null) return "";
+  return r.type === "tv" ? ` · Note : ${r.rating}/10` : ` · Note : ${r.rating}/100`;
 }
 
 /* ------------------------------ App state ------------------------------ */
@@ -1511,14 +1534,25 @@ function showEpisodeModal() {
   document.getElementById("episode-modal").classList.remove("hidden");
 }
 
+/** Note moyenne d'une série/anime (échelle propre à chaque source, la
+ * fiche ne donne accès qu'à celle-là) : TVmaze (`rating.average`, /10) ou
+ * AniList (`averageScore`, /100). `null` si la fiche externe n'en fournit
+ * pas (fréquent pour les titres très récents ou confidentiels). */
+function formatRatingLabel(itemType, raw) {
+  if (raw.rating == null) return null;
+  return itemType === "tv" ? `Note : ${raw.rating}/10 sur TVMaze` : `Note : ${raw.rating}/100 sur AniList`;
+}
+
 /** Affiche une liste de services de streaming (0, 1 ou plusieurs) dans la
- * modale. Factorisé pour être réutilisé aussi bien par la modale
- * "prochain épisode" (0 ou 1 service) que par la modale "Terminé" (peut en
- * avoir plusieurs, côté anime). */
-function renderStreamingList(streamingEl, list) {
+ * modale, suivie de la note moyenne si connue (voir formatRatingLabel).
+ * Factorisé pour être réutilisé aussi bien par la modale "prochain épisode"
+ * (0 ou 1 service) que par la modale "Terminé" (peut en avoir plusieurs,
+ * côté anime). */
+function renderStreamingList(streamingEl, list, ratingLabel) {
   streamingEl.innerHTML = "";
   if (!list.length) {
-    streamingEl.textContent = "Streaming légal : non disponible";
+    streamingEl.appendChild(document.createTextNode("Streaming légal : non disponible"));
+    if (ratingLabel) streamingEl.appendChild(document.createTextNode(` - ${ratingLabel}`));
     return;
   }
 
@@ -1545,6 +1579,8 @@ function renderStreamingList(streamingEl, list) {
       streamingEl.appendChild(fallback);
     }
   }
+
+  if (ratingLabel) streamingEl.appendChild(document.createTextNode(` - ${ratingLabel}`));
 }
 
 /** Traduit un résumé en anglais (HTML simple) et l'injecte dans la modale
@@ -1572,8 +1608,11 @@ function fillTranslatedSummary(summaryEl, rawSummary) {
 /** Remplit la modale de détail avec les infos "prochain épisode" (utilisé
  * pour En cours, et pour À regarder une fois l'épisode 1 récupéré). Ne
  * gère volontairement pas l'affichage de la modale elle-même, pour pouvoir
- * l'ouvrir immédiatement avec un état "Chargement…" pendant le fetch. */
-function fillEpisodeModalContent(item, info) {
+ * l'ouvrir immédiatement avec un état "Chargement…" pendant le fetch.
+ * `ratingLabel` (voir formatRatingLabel) est optionnel : absent quand cette
+ * fonction sert au tout premier rendu synchrone, avant que `raw` (donc la
+ * note) ne soit disponible — voir openEpisodeModal qui la réaffiche ensuite. */
+function fillEpisodeModalContent(item, info, ratingLabel) {
   const titleEl = document.getElementById("episode-modal-title");
   const tagEl = document.getElementById("episode-modal-tag");
   const airdateEl = document.getElementById("episode-modal-airdate");
@@ -1585,7 +1624,7 @@ function fillEpisodeModalContent(item, info) {
   airdateEl.textContent = formatAirdateDisplay(info);
 
   fillTranslatedSummary(summaryEl, item.type === "tv" ? info.summary : null);
-  renderStreamingList(streamingEl, info.streaming ? [info.streaming] : []);
+  renderStreamingList(streamingEl, info.streaming ? [info.streaming] : [], ratingLabel);
 }
 
 function setModalPoster(item) {
@@ -1703,6 +1742,15 @@ async function openEpisodeModal(item, info) {
 
   try {
     const raw = await fetchRawEpisodeData(item); // déjà en cache, vient de servir à calculer `info`
+    // Ré-affiche la ligne streaming pour y ajouter la note moyenne, absente
+    // du premier rendu synchrone (fillEpisodeModalContent ne connaît que
+    // `info`, pas encore `raw`) — mêmes services déjà affichés, donc rendu
+    // idempotent, pas de flash visible pour l'utilisateur.
+    renderStreamingList(
+      document.getElementById("episode-modal-streaming"),
+      info.streaming ? [info.streaming] : [],
+      formatRatingLabel(item.type, raw)
+    );
     const progressEpisode = (progress[item.id] && progress[item.id].episode) || 0;
     fillSeasonsSection(item, raw, progressEpisode, progress[item.id] && progress[item.id].ignored);
   } catch {
@@ -1741,7 +1789,7 @@ async function openUpcomingModal(item) {
       document.getElementById("episode-modal-airdate").textContent = "Aucun épisode disponible.";
       return;
     }
-    fillEpisodeModalContent(item, info);
+    fillEpisodeModalContent(item, info, formatRatingLabel(item.type, raw));
   } catch (e) {
     document.getElementById("episode-modal-airdate").textContent = `Impossible de récupérer les épisodes : ${e.message}`;
   }
@@ -1787,7 +1835,7 @@ async function openFinishedModal(item, stateEntry) {
   try {
     const raw = await fetchRawEpisodeData(item);
     airdateEl.textContent = computeFinishedStatusLabel(item, stateEntry, raw);
-    renderStreamingList(streamingEl, getSeriesStreamingList(item.type, raw));
+    renderStreamingList(streamingEl, getSeriesStreamingList(item.type, raw), formatRatingLabel(item.type, raw));
     fillTranslatedSummary(summaryEl, item.type === "tv" ? raw.summary : raw.description);
     const progressEpisode = (progress[item.id] && progress[item.id].episode) || 0;
     fillSeasonsSection(item, raw, progressEpisode, progress[item.id] && progress[item.id].ignored);
@@ -2379,7 +2427,13 @@ function initEpisodeModal() {
 
         const textWrap = el("div", "result-text");
         textWrap.appendChild(el("p", "result-title", r.title));
-        textWrap.appendChild(el("p", "result-sub", `${r.year || ""} ${r.status ? "· " + r.status : ""}`.trim()));
+        textWrap.appendChild(
+          el(
+            "p",
+            "result-sub",
+            `${r.year || ""} ${r.status ? "· " + r.status : ""}${formatSearchResultRating(r)}`.trim()
+          )
+        );
         row.appendChild(textWrap);
 
         const addBtn = el("button", "result-add-btn", already ? "✓" : "+");
@@ -2694,7 +2748,13 @@ function initAddPanel() {
 
         const textWrap = el("div", "result-text");
         textWrap.appendChild(el("p", "result-title", r.title));
-        textWrap.appendChild(el("p", "result-sub", `${r.year || ""} ${r.status ? "· " + r.status : ""}`.trim()));
+        textWrap.appendChild(
+          el(
+            "p",
+            "result-sub",
+            `${r.year || ""} ${r.status ? "· " + r.status : ""}${formatSearchResultRating(r)}`.trim()
+          )
+        );
         item.appendChild(textWrap);
 
         // Icône "+" : ajoute directement ce résultat dans la liste choisie
