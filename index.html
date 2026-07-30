@@ -56,35 +56,58 @@
 
     <div id="load-error" class="error hidden"></div>
 
+    <nav class="category-tabs" id="category-tabs">
+      <button type="button" class="category-tab active" data-category="series">
+        <span class="tab-icon">📺</span>Séries
+      </button>
+      <button type="button" class="category-tab" data-category="animes">
+        <span class="tab-icon">🍥</span>Animés
+      </button>
+      <button type="button" class="category-tab" data-category="films">
+        <span class="tab-icon">🎬</span>Films<span class="tab-soon">Bientôt</span>
+      </button>
+      <button type="button" class="category-tab" data-category="manga">
+        <span class="tab-icon">📖</span>Mangas/Scans<span class="tab-soon">Bientôt</span>
+      </button>
+    </nav>
+
     <div class="watchlist-search">
       <input type="search" id="watchlist-search-input" placeholder="🔎 Rechercher dans la watchlist…" autocomplete="off" />
     </div>
 
-    <section class="group">
-      <h2>En cours <span id="count-en-cours" class="section-count"></span></h2>
-      <div id="list-en-cours" class="card-list"></div>
-    </section>
+    <div id="category-sections">
+      <section class="group">
+        <h2>En cours <span id="count-en-cours" class="section-count"></span></h2>
+        <div id="list-en-cours" class="card-list"></div>
+      </section>
 
-    <details class="group group-collapsible">
-      <summary>À regarder <span id="count-a-regarder" class="section-count"></span></summary>
-      <div id="list-a-regarder" class="card-list"></div>
-    </details>
+      <details class="group group-collapsible">
+        <summary>À regarder <span id="count-a-regarder" class="section-count"></span></summary>
+        <div id="list-a-regarder" class="card-list"></div>
+      </details>
 
-    <details class="group group-collapsible">
-      <summary>Terminé <span id="count-termine" class="section-count"></span></summary>
-      <div class="subgroup">
-        <h3 class="subgroup-title">À jour <span class="subgroup-hint">(suite à venir)</span> <span id="count-termine-attente" class="section-count"></span></h3>
-        <div id="list-termine-attente" class="card-list"></div>
-      </div>
-      <div class="subgroup">
-        <h3 class="subgroup-title">Vraiment finies <span id="count-termine-fini" class="section-count"></span></h3>
-        <div id="list-termine-fini" class="card-list"></div>
-      </div>
-      <div class="subgroup">
-        <h3 class="subgroup-title">Abandonné <span id="count-termine-abandonne" class="section-count"></span></h3>
-        <div id="list-termine-abandonne" class="card-list"></div>
-      </div>
-    </details>
+      <details class="group group-collapsible">
+        <summary>Terminé <span id="count-termine" class="section-count"></span></summary>
+        <div class="subgroup">
+          <h3 class="subgroup-title">À jour <span class="subgroup-hint">(suite à venir)</span> <span id="count-termine-attente" class="section-count"></span></h3>
+          <div id="list-termine-attente" class="card-list"></div>
+        </div>
+        <div class="subgroup">
+          <h3 class="subgroup-title">Vraiment finies <span id="count-termine-fini" class="section-count"></span></h3>
+          <div id="list-termine-fini" class="card-list"></div>
+        </div>
+        <div class="subgroup">
+          <h3 class="subgroup-title">Abandonné <span id="count-termine-abandonne" class="section-count"></span></h3>
+          <div id="list-termine-abandonne" class="card-list"></div>
+        </div>
+      </details>
+    </div>
+
+    <div id="category-placeholder" class="category-placeholder hidden">
+      <span class="ph-icon"></span>
+      <p class="ph-title"></p>
+      <p class="ph-text"></p>
+    </div>
 
   </section>
 

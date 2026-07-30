@@ -990,6 +990,61 @@ let progress = null;
 // sur quel item agir, sans avoir à le refaire remonter depuis chaque bouton.
 let modalItem = null;
 
+// Onglet de catégorie actuellement affiché ("series"/"animes" ont une vraie
+// watchlist filtrée par type ; "films"/"manga" n'ont pas encore de support
+// et affichent un simple message "Bientôt" — voir renderCategoryChrome.
+let activeCategory = "series";
+
+/** "series"/"animes" seulement : les deux seules catégories qui ont
+ * réellement une logique de suivi aujourd'hui. */
+function isRealCategory(category) {
+  return category === "series" || category === "animes";
+}
+
+/** Sous-ensemble de la watchlist à afficher pour l'onglet actif. Ne filtre
+ * que par `item.type` (tv/anime) : le reste du pipeline de rendu (statuts,
+ * sous-groupes, cartes...) est totalement inchangé, juste appliqué à un
+ * sous-ensemble d'items. */
+function itemsForActiveCategory() {
+  if (activeCategory === "series") return watchlist.items.filter((i) => i.type === "tv");
+  if (activeCategory === "animes") return watchlist.items.filter((i) => i.type === "anime");
+  return [];
+}
+
+const CATEGORY_PLACEHOLDER = {
+  films: {
+    icon: "🎬",
+    title: "Films arrive bientôt",
+    text: "Le suivi des films (vu / pas vu, note) est encore au backlog.",
+  },
+  manga: {
+    icon: "📖",
+    title: "Mangas/Scans arrive bientôt",
+    text: "Le suivi des mangas/scans (progression par chapitre, MangaDex) est encore au backlog.",
+  },
+};
+
+/** Bascule l'affichage entre les sections habituelles (Séries/Animés) et le
+ * message "Bientôt" (Films/Mangas), et masque le bouton flottant d'ajout
+ * pour ces deux dernières catégories (rien à y ajouter pour l'instant). */
+function renderCategoryChrome() {
+  const sectionsEl = document.getElementById("category-sections");
+  const placeholderEl = document.getElementById("category-placeholder");
+  const addBtn = document.getElementById("btn-add");
+  const isReal = isRealCategory(activeCategory);
+
+  sectionsEl.classList.toggle("hidden", !isReal);
+  placeholderEl.classList.toggle("hidden", isReal);
+  addBtn.classList.toggle("hidden", !isReal);
+
+  if (!isReal) {
+    const meta = CATEGORY_PLACEHOLDER[activeCategory];
+    placeholderEl.querySelector(".ph-icon").textContent = meta.icon;
+    placeholderEl.querySelector(".ph-title").textContent = meta.title;
+    placeholderEl.querySelector(".ph-text").textContent = meta.text;
+  }
+}
+
 /* ------------------------------ Rendering ------------------------------ */
 
 function el(tag, className, text) {
@@ -1975,13 +2030,23 @@ async function autoDemoteWaitingItems(items) {
 }
 
 async function renderAll() {
+  // Bascules de statut automatiques : sur TOUTE la watchlist, quel que soit
+  // l'onglet de catégorie affiché à l'instant — sinon un titre d'une
+  // catégorie non affichée ne serait jamais re-vérifié tant qu'on ne
+  // rouvre pas son onglet.
   const initialGroups = groupByStatus(watchlist.items);
   await autoDemoteWaitingItems(initialGroups.en_cours);
   await autoPromoteUpToDateItems(initialGroups.termine);
 
+  renderCategoryChrome();
+  if (!isRealCategory(activeCategory)) {
+    return; // Films / Mangas-Scans : pas encore de suivi, le message "Bientôt" suffit
+  }
+
   // Regroupe à nouveau après d'éventuelles promotions/rétrogradations, pour
-  // que les items concernés apparaissent dans la bonne section dès ce rendu.
-  const groups = groupByStatus(watchlist.items);
+  // que les items concernés apparaissent dans la bonne section dès ce
+  // rendu — mais scopé à l'onglet actif seulement (voir itemsForActiveCategory).
+  const groups = groupByStatus(itemsForActiveCategory());
   await renderList("list-en-cours", groups.en_cours, buildEpisodeCard);
   setSectionCount("count-en-cours", groups.en_cours.length);
   await renderList("list-a-regarder", groups.a_regarder, buildShowCard);
@@ -2869,6 +2934,20 @@ function initWatchlistSearch() {
   input.addEventListener("input", applyWatchlistSearch);
 }
 
+/** Bascule d'onglet de catégorie (Séries/Animés/Films/Mangas-Scans) : ne
+ * fait que changer `activeCategory` et redemander un rendu, tout le reste
+ * (filtrage, statuts, cartes) est déjà géré par renderAll(). */
+function initCategoryTabs() {
+  const tabs = document.querySelectorAll(".category-tab");
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      activeCategory = tab.dataset.category;
+      tabs.forEach((t) => t.classList.toggle("active", t === tab));
+      renderAll();
+    });
+  });
+}
+
 /* Le bootstrap réel ne s'exécute que dans un navigateur (pas lors des
    tests Node, où `document` n'existe pas). */
 if (typeof document !== "undefined") {
@@ -2878,6 +2957,7 @@ if (typeof document !== "undefined") {
     initEpisodeModal();
     initDeleteChoiceModal();
     initWatchlistSearch();
+    initCategoryTabs();
 
     document.getElementById("btn-refresh").addEventListener("click", boot);
     document.getElementById("btn-settings").addEventListener("click", () => {

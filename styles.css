@@ -58,6 +58,62 @@ main { padding: 16px; max-width: 640px; margin: 0 auto; }
 
 .screen.hidden { display: none; }
 
+/* --------- Onglets de catégorie (Séries/Animés/Films/Mangas-Scans) --------- */
+
+.category-tabs {
+  display: flex;
+  margin: -16px -16px 16px;
+  border-bottom: 1px solid var(--card-border);
+}
+.category-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 10px 4px 9px;
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
+}
+.category-tab .tab-icon { font-size: 1.15rem; line-height: 1; }
+.category-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.category-tab .tab-soon {
+  display: block;
+  font-size: 0.6rem;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--accent-yellow);
+  margin-top: 1px;
+}
+
+#category-sections.hidden { display: none; }
+
+/* État "catégorie pas encore prise en charge" (Films, Mangas/Scans). */
+.category-placeholder {
+  text-align: center;
+  padding: 56px 20px;
+  color: var(--text-dim);
+}
+.category-placeholder.hidden { display: none; }
+.category-placeholder .ph-icon {
+  font-size: 2.4rem;
+  display: block;
+  margin-bottom: 14px;
+  opacity: 0.7;
+}
+.category-placeholder p { margin: 0 0 6px; line-height: 1.5; }
+.category-placeholder .ph-title { color: var(--text); font-weight: 600; font-size: 1rem; }
+
 .watchlist-search { margin-bottom: 20px; }
 .watchlist-search input {
   width: 100%;
@@ -332,6 +388,7 @@ label input {
   z-index: 20;
 }
 .fab:active { transform: scale(0.95); }
+.fab.hidden { display: none; }
 
 .overlay {
   position: fixed;
