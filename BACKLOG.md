@@ -8,38 +8,28 @@ Rien actuellement.
 
 ## À faire
 
-### 1. Uniformisation des blocs (modale & interactions)
-
-- **Blocs "À regarder" : affichage similaire aux blocs "En cours"**, pour valider le visionnage de l'épisode 1 directement depuis le bloc et basculer la série en "En cours".
-- **Déplacer un titre par cliquer-glisser entre "En cours" et "À regarder".**
-  Probablement redondant une fois le point ci-dessus traité — à réévaluer à ce moment-là.
-
-### 2. Gestion des saisons
-
-- **Vision des saisons/épisodes dans la modale de série** (le regroupement de plusieurs saisons à l'ajout est fait ; reste l'affichage détaillé saison/épisode dans la modale de détail).
-
-### 3. Fonctionnalités transverses
+### 1. Fonctionnalités transverses
 
 - Vue "cette semaine" façon calendrier.
-- Recherche / tri / filtre parmi les séries déjà dans la watchlist (distinct de la recherche d'ajout de titre).
-- Petites frictions à réduire : marquer "vu" en un tap, file d'attente hors-ligne, export/sauvegarde en un clic.
+- En plus des services de streaming, afficher les ratings (séries, anime, manga...) dans la modale de détail, et aussi dans les résultats de recherche du panneau d'ajout.
 
-### 4. Extension du périmètre
+### 2. Extension du périmètre
 
 - Suivi des mangas via MangaDex, progression par chapitre.
 - Support des films (vu/pas vu, note).
+- Regroupement des films façon "Collection" (même principe que le regroupement de saisons anime) — nécessite d'abord la logique de suivi des films ci-dessus.
 - Étudier un découpage de l'app en plusieurs parties : Séries / Mangas / Livres.
 - Lecture vidéo intégrée : embarquer les flux de streaming pour visionner directement depuis l'app plutôt que de rediriger vers le service externe. À creuser (faisabilité technique/légale selon les plateformes).
 
-### 5. Design
+### 3. Design
 
 - Refonte graphique de l'app à partir du design en cours de création suite à l'obtention du logo.
 - Affichage optimisé pour mobile.
 - Barre de progression (section "En cours") : utiliser toute la largeur disponible plutôt qu'une largeur fixe.
 
-### 6. Recherche / inspiration
+### 4. Recherche / inspiration
 
-- Regarder l'outil Sickrage (suivi de séries) pour voir ce qui pourrait compléter/inspirer Omnivore.
+- Regarder les outils Sickrage/Sonarr/Radarr (suivi de séries/films) pour voir ce qui pourrait compléter/inspirer Omnivore.
 
 ## Hors scope pour l'instant
 
@@ -72,3 +62,9 @@ Rien actuellement.
 - Bascule automatique "À jour" → "En cours" dès qu'un nouvel épisode non vu est diffusé (détecté au chargement, sans action de l'utilisateur).
 - Cartes "En cours" affichant le dernier épisode connu (sans retard) : mention "Dernier pour l'instant, une suite est prévue" / "Dernier épisode (vraiment)" à la place du vide.
 - Bascule automatique "En cours" → "Terminé"/"À jour" dès que le prochain épisode connu n'est pas encore diffusé (complément symétrique de la bascule ci-dessus) : "En cours" ne garde que les séries où il y a vraiment quelque chose à regarder maintenant.
+- Blocs "À regarder" : affichage similaire aux blocs "En cours" — bouton "Episode 1 vu" qui valide le visionnage de l'épisode 1 et bascule la série en "En cours" ; "Reprendre" à la place si une progression existait déjà (pas de revalidation, simple bascule).
+- Affichage détaillé saison/épisode dans la modale de détail série (calendrier épisode par épisode pour les séries TV ; niveau saison pour les animes, AniList ne donnant pas l'historique des dates passées).
+- Ajout d'une saison depuis la modale de détail d'une série déjà ajoutée (anime), avec refus explicite si la saison choisie n'est pas plus récente que la dernière suivie.
+- Suppression de la dernière saison depuis la même modale (anime, à partir de 2 saisons), avec ramène automatique de la progression si elle dépassait la saison retirée.
+- Cartes "À jour (suite à venir)" : affichage de la date du prochain épisode connu au-dessus du bouton "Regarder à nouveau" ("Pas de date annoncée" si rien n'est encore programmé).
+- Recherche/tri/filtre dans la watchlist : champ de recherche au-dessus des sections, filtre les cartes en temps réel sur le titre, déplie automatiquement "À regarder"/"Terminé" s'ils contiennent un résultat masqué.

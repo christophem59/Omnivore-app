@@ -161,6 +161,27 @@ function deriveTvEpisodeInfo(raw, progressEpisode, todayStr) {
   };
 }
 
+/** Regroupe le tableau plat d'épisodes TVmaze (déjà trié par ordre de
+ * diffusion) par saison, en conservant l'ordre de première apparition —
+ * pour l'affichage détaillé saison/épisode de la modale de détail. Chaque
+ * groupe garde l'index global (0-based) de ses épisodes dans le tableau
+ * d'origine, pour pouvoir comparer directement à `progress[item.id].episode`
+ * sans recalcul. */
+function groupEpisodesBySeason(episodes) {
+  const groups = [];
+  const bySeasonNumber = new Map();
+  (episodes || []).forEach((ep, globalIndex) => {
+    let group = bySeasonNumber.get(ep.season);
+    if (!group) {
+      group = { season: ep.season, episodes: [] };
+      bySeasonNumber.set(ep.season, group);
+      groups.push(group);
+    }
+    group.episodes.push({ ...ep, globalIndex });
+  });
+  return groups;
+}
+
 /** Choisit, parmi les liens de streaming AniList (rarement structurés
  * précisément par épisode), celui qui correspond au numéro d'épisode visé ;
  * à défaut, le premier lien disponible (mieux que rien). */
@@ -420,6 +441,31 @@ function computeFinishedStatusLabel(item, stateEntry, raw) {
   const history = getFinishedHistory(item);
   if (!history.length) return endLabel;
   return `${endLabel} - Terminée le ${isoToDMY(history[history.length - 1])}`;
+}
+
+/** Date du prochain épisode pour une carte "À jour (suite à venir)" :
+ * n'est appelée que pour ce sous-groupe (voir renderFinishedGroups), où la
+ * série est encore en diffusion dans la vraie vie mais où l'utilisateur a
+ * déjà vu tout ce qui est connu. Deux cas selon deriveTvEpisodeInfo /
+ * deriveAnimeEpisodeInfo : soit un prochain épisode est déjà programmé
+ * (date connue), soit rien n'est encore annoncé au-delà (`kind: "finished"`
+ * malgré une série toujours active). */
+function formatNextEpisodeDate(item, raw) {
+  const progressEpisode = (progress[item.id] && progress[item.id].episode) || 0;
+  const info =
+    item.type === "tv"
+      ? deriveTvEpisodeInfo(raw, progressEpisode, new Date().toISOString().slice(0, 10))
+      : deriveAnimeEpisodeInfo(raw, progressEpisode, Date.now() / 1000);
+
+  if (info.kind === "episode" && info.airdate) {
+    if (item.type === "tv") {
+      const [y, m, d] = info.airdate.split("-").map(Number);
+      return `Prochain épisode le ${formatDMY(y, m, d)}`;
+    }
+    const d = new Date(info.airdate * 1000);
+    return `Prochain épisode le ${formatDMY(d.getFullYear(), d.getMonth() + 1, d.getDate())}`;
+  }
+  return "Pas de date annoncée";
 }
 
 /** Liste (dédupliquée) des services de streaming sur lesquels une série
@@ -692,6 +738,7 @@ async function queryAnilistMedia({ id, search, label }) {
         status
         episodes
         description
+        seasonYear
         endDate { year month day }
         nextAiringEpisode { episode airingAt }
         airingSchedule(perPage: 50) { nodes { episode airingAt } }
@@ -716,6 +763,7 @@ function mapAnilistMediaToRaw(media) {
     status: media.status,
     totalEpisodes: media.episodes,
     description: media.description || null,
+    seasonYear: media.seasonYear || null,
     endDate: media.endDate || null,
     nextAiringEpisode: media.nextAiringEpisode,
     airingSchedule: (media.airingSchedule && media.airingSchedule.nodes) || [],
@@ -745,10 +793,23 @@ async function fetchAnimeRawGrouped(item) {
   let offsetReliable = true;
   const airingSchedule = [];
   const streamingEpisodesRaw = [];
+  const seasons = [];
   let nextAiringEpisode = null;
 
   seasonsData.forEach((season, idx) => {
     const isLast = idx === seasonsData.length - 1;
+    // offsetStart capturé avant le traitement de cette saison : tant que
+    // offsetReliable tient, c'est le numéro d'épisode global (0-based) où
+    // commence cette saison ; sinon (total d'une saison précédente inconnu)
+    // impossible de dire à quel épisode global elle démarre.
+    seasons.push({
+      anilist_id: item.anilist_seasons[idx].anilist_id,
+      label: item.anilist_seasons[idx].search_title,
+      totalEpisodes: season.totalEpisodes,
+      status: season.status,
+      year: season.seasonYear,
+      offsetStart: offsetReliable ? offset : null,
+    });
     if (offsetReliable) {
       season.airingSchedule.forEach((node) => {
         airingSchedule.push({ episode: node.episode + offset, airingAt: node.airingAt });
@@ -778,6 +839,7 @@ async function fetchAnimeRawGrouped(item) {
     nextAiringEpisode,
     airingSchedule,
     streamingEpisodesRaw,
+    seasons,
   };
 }
 
@@ -800,7 +862,18 @@ async function fetchAnimeRaw(item) {
     await store.putFile("watchlist.json", watchlist, `Épinglage anilist_id : ${item.id}`);
   }
 
-  return mapAnilistMediaToRaw(media);
+  const raw = mapAnilistMediaToRaw(media);
+  raw.seasons = [
+    {
+      anilist_id: item.anilist_id,
+      label: item.search_title,
+      totalEpisodes: raw.totalEpisodes,
+      status: raw.status,
+      year: raw.seasonYear,
+      offsetStart: 0,
+    },
+  ];
+  return raw;
 }
 
 async function fetchRawEpisodeData(item, { forceRefresh } = {}) {
@@ -889,6 +962,11 @@ let watchlist = null;
 let state = null;
 let progress = null;
 
+// Item actuellement affiché dans la modale de détail (episode-modal) : mémorisé
+// pour que les actions "ajouter/retirer une saison" de cette même modale sachent
+// sur quel item agir, sans avoir à le refaire remonter depuis chaque bouton.
+let modalItem = null;
+
 /* ------------------------------ Rendering ------------------------------ */
 
 function el(tag, className, text) {
@@ -902,13 +980,13 @@ function el(tag, className, text) {
  * du toast, qui lui n'apparaît que quand on rattrape/termine une série) :
  * un ✓ vert qui pulse et s'efface, pour rendre visible le fait qu'on vient
  * de valider un épisode même si un autre suit immédiatement derrière. */
-function flashWatched(cardEl) {
+function flashWatched(cardEl, variant) {
   return new Promise((resolve) => {
     const badge = document.createElement("div");
-    badge.className = "watched-flash-badge";
-    badge.textContent = "✓";
+    badge.className = variant === "ignored" ? "watched-flash-badge ignored-flash-badge" : "watched-flash-badge";
+    badge.textContent = variant === "ignored" ? "⏭" : "✓";
     cardEl.appendChild(badge);
-    cardEl.classList.add("watched-flash");
+    cardEl.classList.add(variant === "ignored" ? "ignored-flash" : "watched-flash");
     setTimeout(resolve, 950);
   });
 }
@@ -987,15 +1065,22 @@ async function buildShowCard(item) {
   // Même colonne d'actions et même style (bordure rouge) que "Regarder à
   // nouveau" sur les cartes "Terminé" : les deux boutons font basculer
   // une carte vers "En cours" et méritent d'être visuellement cohérents.
+  // Si une progression existait déjà (titre mis en pause), le bouton se
+  // contente de reprendre là où on était, sans revalider l'épisode 1.
   const actions = el("div", "card-actions");
-  const startBtn = el("button", "small-btn watch-again", "Commencer");
+  const startBtn = el("button", "small-btn watch-again", watchedCount > 0 ? "Reprendre" : "Episode 1 vu");
   startBtn.addEventListener("click", async (e) => {
     e.stopPropagation();
     startBtn.textContent = "…";
     startBtn.disabled = true;
     try {
       await startWatching(item.id);
-      showToast(`"${item.display_title}" : c'est parti !`);
+      if (watchedCount > 0) {
+        showToast(`"${item.display_title}" : c'est parti !`);
+      } else {
+        await markEpisodeWatched(item);
+        return; // markEpisodeWatched a déjà déclenché son propre renderAll()
+      }
     } catch (e) {
       alert(e.message);
     }
@@ -1065,6 +1150,9 @@ async function buildFinishedCard(item, raw, reallyFinished) {
   // "En cours" (✓ Vu / ✎ Ajuster) : le bouton s'aligne ainsi sur la même
   // colonne verticale plutôt que d'être coincé sous le texte.
   const actions = el("div", "card-actions");
+  if (!reallyFinished && raw) {
+    actions.appendChild(el("p", "next-episode-date", formatNextEpisodeDate(item, raw)));
+  }
   const watchAgainBtn = el("button", "small-btn watch-again", "Regarder à nouveau");
   watchAgainBtn.addEventListener("click", async (e) => {
     e.stopPropagation();
@@ -1316,6 +1404,22 @@ async function buildEpisodeCard(item) {
       }
     });
     actions.appendChild(watchedBtn);
+
+    // À côté de "✓ Vu" : passe à l'épisode suivant sans le compter comme vu
+    // (épisode spécial qu'on ne regarde pas, par exemple) — voir ignoreEpisode.
+    const ignoreBtn = el("button", "small-btn", "Ignoré");
+    ignoreBtn.title = "Passer cet épisode sans le marquer comme vu (ex. épisode spécial)";
+    ignoreBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      ignoreBtn.disabled = true;
+      try {
+        await Promise.all([flashWatched(card, "ignored"), ignoreEpisode(item)]);
+      } catch (err) {
+        alert(err.message);
+        ignoreBtn.disabled = false;
+      }
+    });
+    actions.appendChild(ignoreBtn);
   }
 
   const adjustBtn = el("button", "small-btn", "✎ Ajuster");
@@ -1492,10 +1596,119 @@ function setModalPoster(item) {
   });
 }
 
-function openEpisodeModal(item, info) {
+/** Traduit un statut AniList en libellé français court, pour l'affichage
+ * saison par saison côté anime. */
+function formatAnilistStatus(status) {
+  switch (status) {
+    case "FINISHED":
+      return "Terminée";
+    case "RELEASING":
+      return "En diffusion";
+    case "NOT_YET_RELEASED":
+      return "Pas encore diffusée";
+    case "CANCELLED":
+      return "Annulée";
+    case "HIATUS":
+      return "En pause";
+    default:
+      return status || "Statut inconnu";
+  }
+}
+
+/** Affiche/masque les actions "+ Ajouter une saison" / "🗑 Retirer la
+ * dernière saison" : propres aux fiches anime (le regroupement
+ * multi-saisons est une notion AniList, voir anilist_seasons) ; le retrait
+ * ne s'affiche qu'à partir de 2 saisons (avec une seule, "retirer la
+ * dernière" reviendrait à supprimer tout le titre — déjà couvert par la
+ * poubelle de la carte). */
+function updateSeasonActionsVisibility(item) {
+  const actionsEl = document.getElementById("episode-modal-season-actions");
+  const removeBtn = document.getElementById("btn-remove-last-season");
+  const isAnime = item.type === "anime";
+  actionsEl.classList.toggle("hidden", !isAnime);
+  const hasMultipleSeasons = Array.isArray(item.anilist_seasons) && item.anilist_seasons.length >= 2;
+  removeBtn.classList.toggle("hidden", !hasMultipleSeasons);
+}
+
+/** Remplit la section "détail saison/épisode" de la modale à partir de la
+ * fiche brute déjà récupérée (`raw`, voir fetchTvRaw/fetchAnimeRaw). Pour
+ * la TV, TVmaze fournit l'historique complet des épisodes (numéro + date) :
+ * un vrai calendrier par saison est possible (groupEpisodesBySeason). Pour
+ * l'anime, AniList (`airingSchedule`) ne fournit que le planning à venir,
+ * jamais les dates des épisodes déjà diffusés : le détail reste au niveau
+ * de la saison (libellé, total, statut, nombre vus), voir raw.seasons
+ * (fetchAnimeRaw / fetchAnimeRawGrouped). */
+function fillSeasonsSection(item, raw, progressEpisode, ignoredIndices) {
+  const container = document.getElementById("episode-modal-seasons");
+  container.innerHTML = "";
+  const ignoredSet = new Set(ignoredIndices || []);
+
+  if (item.type === "tv") {
+    const groups = groupEpisodesBySeason(raw.episodes);
+    groups.forEach((group) => {
+      const watchedInSeason = group.episodes.filter(
+        (ep) => ep.globalIndex < progressEpisode && !ignoredSet.has(ep.globalIndex)
+      ).length;
+      const details = el("details", "season-detail");
+      details.appendChild(
+        el("summary", null, `Saison ${group.season} (${watchedInSeason}/${group.episodes.length} épisodes vus)`)
+      );
+      const body = el("div", "season-detail-body season-episode-list");
+      group.episodes.forEach((ep) => {
+        const reached = ep.globalIndex < progressEpisode;
+        const isIgnored = reached && ignoredSet.has(ep.globalIndex);
+        const watched = reached && !isIgnored;
+        const row = el("p", `season-episode-row${watched ? " watched" : ""}`);
+        row.appendChild(el("span", null, `S${pad2(ep.season)}E${pad2(ep.number)}${ep.name ? " — " + ep.name : ""}`));
+        const badgeText = watched ? "✓" : isIgnored ? "Ignoré" : ep.airdate || "?";
+        const badge = el("span", "season-episode-check", badgeText);
+        if (isIgnored) badge.classList.add("ignored");
+        row.appendChild(badge);
+        body.appendChild(row);
+      });
+      details.appendChild(body);
+      container.appendChild(details);
+    });
+  } else {
+    (raw.seasons || []).forEach((season, idx) => {
+      const total = season.totalEpisodes;
+      let watched =
+        season.offsetStart == null || total == null
+          ? null
+          : Math.max(0, Math.min(total, progressEpisode - season.offsetStart));
+      if (watched != null) {
+        const ignoredInSeason = Array.from(ignoredSet).filter(
+          (i) => i >= season.offsetStart && i < season.offsetStart + total
+        ).length;
+        watched = Math.max(0, watched - ignoredInSeason);
+      }
+      const countLabel =
+        total != null && watched != null ? `${watched}/${total} épisodes vus` : "nombre d'épisodes inconnu";
+      const label = season.label ? ` — ${season.label}` : "";
+      const details = el("details", "season-detail");
+      details.appendChild(el("summary", null, `Saison ${idx + 1}${label} (${countLabel})`));
+      details.appendChild(el("div", "season-detail-body hint", formatAnilistStatus(season.status)));
+      container.appendChild(details);
+    });
+  }
+
+  updateSeasonActionsVisibility(item);
+}
+
+async function openEpisodeModal(item, info) {
+  modalItem = item;
   fillEpisodeModalContent(item, info);
   setModalPoster(item);
   showEpisodeModal();
+
+  try {
+    const raw = await fetchRawEpisodeData(item); // déjà en cache, vient de servir à calculer `info`
+    const progressEpisode = (progress[item.id] && progress[item.id].episode) || 0;
+    fillSeasonsSection(item, raw, progressEpisode, progress[item.id] && progress[item.id].ignored);
+  } catch {
+    // Le reste de la modale (déjà rempli via `info`) reste utilisable même
+    // si le détail saison/épisode ne peut pas se charger.
+  }
 }
 
 /** Modale de détail pour une carte "À regarder" : montre les infos du tout
@@ -1504,16 +1717,23 @@ function openEpisodeModal(item, info) {
  * modale tout de suite avec un état "Chargement…" le temps du fetch réseau,
  * plutôt que de faire attendre le clic. */
 async function openUpcomingModal(item) {
+  modalItem = item;
   document.getElementById("episode-modal-title").textContent = item.display_title;
   document.getElementById("episode-modal-tag").textContent = "";
   document.getElementById("episode-modal-airdate").textContent = "Chargement…";
   document.getElementById("episode-modal-summary").classList.add("hidden");
   document.getElementById("episode-modal-streaming").textContent = "";
+  document.getElementById("episode-modal-seasons").innerHTML = "";
+  document.getElementById("episode-modal-season-actions").classList.add("hidden");
   setModalPoster(item);
   showEpisodeModal();
 
   try {
     const info = await getNextEpisodeInfo(item);
+    const raw = await fetchRawEpisodeData(item); // déjà en cache, vient de servir à calculer `info`
+    const progressEpisode = (progress[item.id] && progress[item.id].episode) || 0;
+    fillSeasonsSection(item, raw, progressEpisode, progress[item.id] && progress[item.id].ignored);
+
     if (info.kind === "finished") {
       // Cas rare : une série "à regarder" dont la fiche externe n'a déjà
       // plus rien à proposer (ex. série annulée après un seul épisode).
@@ -1534,6 +1754,7 @@ async function openUpcomingModal(item) {
  * dernier épisode connu (`stateEntry`, depuis state.json) s'affiche tout
  * de suite, remplacé par la bonne mention une fois le fetch résolu. */
 async function openFinishedModal(item, stateEntry) {
+  modalItem = item;
   const titleEl = document.getElementById("episode-modal-title");
   const tagEl = document.getElementById("episode-modal-tag");
   const airdateEl = document.getElementById("episode-modal-airdate");
@@ -1544,6 +1765,8 @@ async function openFinishedModal(item, stateEntry) {
   summaryEl.textContent = "";
   summaryEl.classList.add("hidden");
   streamingEl.textContent = "";
+  document.getElementById("episode-modal-seasons").innerHTML = "";
+  document.getElementById("episode-modal-season-actions").classList.add("hidden");
   setModalPoster(item);
 
   if (item.abandoned) {
@@ -1566,6 +1789,8 @@ async function openFinishedModal(item, stateEntry) {
     airdateEl.textContent = computeFinishedStatusLabel(item, stateEntry, raw);
     renderStreamingList(streamingEl, getSeriesStreamingList(item.type, raw));
     fillTranslatedSummary(summaryEl, item.type === "tv" ? raw.summary : raw.description);
+    const progressEpisode = (progress[item.id] && progress[item.id].episode) || 0;
+    fillSeasonsSection(item, raw, progressEpisode, progress[item.id] && progress[item.id].ignored);
   } catch (e) {
     airdateEl.textContent = `Infos indisponibles (${e.message})`;
   }
@@ -1715,6 +1940,11 @@ async function renderAll() {
   setSectionCount("count-a-regarder", groups.a_regarder.length);
   await renderFinishedGroups(groups.termine);
   setSectionCount("count-termine", groups.termine.length);
+
+  // Ré-applique la recherche en cours (si l'utilisateur a déjà tapé quelque
+  // chose) sur les cartes fraîchement reconstruites, sinon un renderAll()
+  // déclenché entre-temps (✓ Vu, bascule auto...) ferait réapparaître tout.
+  applyWatchlistSearch();
 }
 
 /* ------------------------------ Actions ------------------------------ */
@@ -1804,9 +2034,19 @@ async function watchAgain(itemId) {
  * ajustement manuel du numéro d'épisode (ex. "180" pour une série qui en
  * compte exactement 180 : la carte doit basculer en "Terminé" tout
  * autant que si on avait cliqué "✓ Vu" jusqu'au bout). */
-async function applyEpisodeProgress(item, newEpisode, raw) {
-  progress[item.id] = { episode: newEpisode };
-  await store.putFile("progress.json", progress, `Progression : ${item.id} -> épisode ${newEpisode}`);
+async function applyEpisodeProgress(item, newEpisode, raw, { ignoreIndex } = {}) {
+  // Liste des épisodes passés via "Ignoré" plutôt que "✓ Vu" (voir
+  // ignoreEpisode) : préservée d'un appel à l'autre plutôt qu'écrasée, pour
+  // que fillSeasonsSection continue à ne pas les compter comme vus même
+  // après un ajustement manuel ultérieur du numéro d'épisode.
+  const previousIgnored = (progress[item.id] && progress[item.id].ignored) || [];
+  const ignored = ignoreIndex != null ? [...previousIgnored, ignoreIndex] : previousIgnored;
+  progress[item.id] = ignored.length ? { episode: newEpisode, ignored } : { episode: newEpisode };
+  await store.putFile(
+    "progress.json",
+    progress,
+    `Progression : ${item.id} -> épisode ${newEpisode}${ignoreIndex != null ? " (ignoré)" : ""}`
+  );
 
   const info =
     item.type === "tv"
@@ -1832,6 +2072,21 @@ async function markEpisodeWatched(item) {
   const raw = await fetchRawEpisodeData(item); // pas de refetch réseau : la donnée brute ne dépend pas de la progression
   const newEpisode = ((progress[item.id] && progress[item.id].episode) || 0) + 1;
   await applyEpisodeProgress(item, newEpisode, raw);
+  await renderAll();
+}
+
+/** Ignore l'épisode actuellement affiché (bouton "Ignoré" de la carte
+ * épisode, à côté de "✓ Vu") : avance le pointeur de progression exactement
+ * comme "✓ Vu" (même bascule automatique vers "Terminé"/"À jour"), mais
+ * sans compter cet épisode comme vu — pour les épisodes spéciaux qu'on
+ * saute volontairement. L'index global de l'épisode ignoré est mémorisé
+ * (progress[id].ignored) pour que fillSeasonsSection ne l'affiche pas ✓
+ * dans le détail saison/épisode. */
+async function ignoreEpisode(item) {
+  const raw = await fetchRawEpisodeData(item);
+  const currentIndex = (progress[item.id] && progress[item.id].episode) || 0;
+  const newEpisode = currentIndex + 1;
+  await applyEpisodeProgress(item, newEpisode, raw, { ignoreIndex: currentIndex });
   await renderAll();
 }
 
@@ -1894,6 +2149,62 @@ async function addGroupedAnimeItem({ title, seasons, status }) {
   }
 
   return id;
+}
+
+/** Ajoute une nouvelle saison à un item anime existant (simple ou déjà
+ * groupé), depuis la modale de détail. N'est appelée qu'après validation
+ * (côté UI, voir initEpisodeModal) que la saison choisie est plus récente
+ * que la dernière déjà suivie : insérer au milieu décalerait la
+ * numérotation continue des saisons suivantes et invaliderait la
+ * progression déjà enregistrée (même risque que removeLastSeason évite en
+ * sens inverse). Si l'item n'était pas encore groupé, sa propre fiche
+ * devient la première saison du regroupement. */
+async function addSeasonToItem(itemId, seasonResult) {
+  const item = watchlist.items.find((i) => i.id === itemId);
+  if (!item) return;
+
+  if (!Array.isArray(item.anilist_seasons)) {
+    item.anilist_seasons = [{ anilist_id: item.anilist_id, search_title: item.search_title }];
+  }
+  item.anilist_seasons.push({ anilist_id: seasonResult.anilist_id, search_title: seasonResult.search_title });
+  await store.putFile(
+    "watchlist.json",
+    watchlist,
+    `Saison ajoutée : ${itemId} (+${seasonResult.search_title || seasonResult.anilist_id})`
+  );
+
+  const cache = loadEpisodeCache();
+  delete cache[itemId];
+  saveEpisodeCache(cache);
+}
+
+/** Retire la dernière saison d'un item anime groupé (voir
+ * updateSeasonActionsVisibility : uniquement proposé à partir de 2
+ * saisons). Si la progression enregistrée dépassait déjà le début de
+ * cette dernière saison, elle est ramenée à la fin de la saison
+ * précédente (`clampedEpisode`) puisque les épisodes au-delà appartenaient
+ * à la saison qu'on retire — c'est à l'appelant (voir initEpisodeModal) de
+ * demander confirmation avant d'appeler cette fonction si un clamp réel va
+ * avoir lieu. */
+async function removeLastSeason(itemId, clampedEpisode) {
+  const item = watchlist.items.find((i) => i.id === itemId);
+  if (!item || !Array.isArray(item.anilist_seasons) || item.anilist_seasons.length < 2) return;
+
+  item.anilist_seasons.pop();
+  await store.putFile("watchlist.json", watchlist, `Saison retirée (dernière) : ${itemId}`);
+
+  if (typeof clampedEpisode === "number" && progress[itemId] && progress[itemId].episode > clampedEpisode) {
+    progress[itemId] = { episode: clampedEpisode };
+    await store.putFile(
+      "progress.json",
+      progress,
+      `Progression : ${itemId} ramenée à l'épisode ${clampedEpisode} (saison retirée)`
+    );
+  }
+
+  const cache = loadEpisodeCache();
+  delete cache[itemId];
+  saveEpisodeCache(cache);
 }
 
 /** Retire un titre de la watchlist et nettoie sa progression associée
@@ -1995,13 +2306,163 @@ function initSetupScreen() {
 function initEpisodeModal() {
   const modal = document.getElementById("episode-modal");
   const closeBtn = document.getElementById("btn-episode-modal-close");
-  closeBtn.addEventListener("click", () => modal.classList.add("hidden"));
+  const openAddSeasonBtn = document.getElementById("btn-open-add-season");
+  const removeLastSeasonBtn = document.getElementById("btn-remove-last-season");
+  const addSeasonPanel = document.getElementById("add-season-panel");
+  const addSeasonInput = document.getElementById("add-season-input");
+  const addSeasonStatus = document.getElementById("add-season-status");
+  const addSeasonResults = document.getElementById("add-season-results");
+  const addSeasonError = document.getElementById("add-season-error");
+
+  function resetAddSeasonPanel() {
+    addSeasonPanel.classList.add("hidden");
+    addSeasonInput.value = "";
+    addSeasonStatus.textContent = "";
+    addSeasonResults.innerHTML = "";
+    addSeasonError.classList.add("hidden");
+  }
+
+  function close() {
+    modal.classList.add("hidden");
+    resetAddSeasonPanel();
+  }
+
+  closeBtn.addEventListener("click", close);
   modal.addEventListener("click", (e) => {
-    if (e.target === modal) modal.classList.add("hidden");
+    if (e.target === modal) close();
   });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !modal.classList.contains("hidden")) {
-      modal.classList.add("hidden");
+      close();
+    }
+  });
+
+  // "+ Ajouter une saison" bascule le petit panneau de recherche (façon
+  // panneau d'ajout principal, mais scopé à la série affichée).
+  openAddSeasonBtn.addEventListener("click", () => {
+    const wasHidden = addSeasonPanel.classList.contains("hidden");
+    resetAddSeasonPanel();
+    if (wasHidden) {
+      addSeasonPanel.classList.remove("hidden");
+      addSeasonInput.focus();
+    }
+  });
+
+  async function runAddSeasonSearch() {
+    const query = addSeasonInput.value.trim();
+    if (!query || !modalItem) return;
+    addSeasonStatus.textContent = "Recherche…";
+    addSeasonResults.innerHTML = "";
+    addSeasonError.classList.add("hidden");
+
+    try {
+      const results = await searchAnilistMulti(query);
+      const existingIds = new Set(
+        Array.isArray(modalItem.anilist_seasons)
+          ? modalItem.anilist_seasons.map((s) => s.anilist_id)
+          : modalItem.anilist_id
+            ? [modalItem.anilist_id]
+            : []
+      );
+      addSeasonStatus.textContent = results.length ? `${results.length} résultat(s)` : "Aucun résultat.";
+      addSeasonResults.innerHTML = "";
+
+      for (const r of results) {
+        const already = existingIds.has(r.anilist_id);
+        const row = el("div", "result-item");
+        if (already) row.classList.add("already-added");
+
+        const img = document.createElement("img");
+        img.src = r.image || "";
+        img.alt = r.title;
+        row.appendChild(img);
+
+        const textWrap = el("div", "result-text");
+        textWrap.appendChild(el("p", "result-title", r.title));
+        textWrap.appendChild(el("p", "result-sub", `${r.year || ""} ${r.status ? "· " + r.status : ""}`.trim()));
+        row.appendChild(textWrap);
+
+        const addBtn = el("button", "result-add-btn", already ? "✓" : "+");
+        addBtn.type = "button";
+        if (already) {
+          addBtn.classList.add("added");
+          addBtn.disabled = true;
+          addBtn.title = "Déjà une saison de ce titre";
+        } else {
+          addBtn.title = "Ajouter comme nouvelle saison";
+          addBtn.addEventListener("click", async () => {
+            addBtn.disabled = true;
+            addSeasonError.classList.add("hidden");
+            try {
+              // Refus explicite plutôt qu'une insertion silencieuse au
+              // milieu : ça décalerait la numérotation continue des saisons
+              // suivantes et invaliderait la progression déjà enregistrée
+              // (voir le commentaire de addSeasonToItem).
+              const raw = await fetchRawEpisodeData(modalItem);
+              const seasons = raw.seasons || [];
+              const lastYear = seasons.length ? parseInt(seasons[seasons.length - 1].year, 10) : null;
+              const candidateYear = parseInt(r.year, 10);
+              if (lastYear && candidateYear && candidateYear < lastYear) {
+                throw new Error("Cette saison doit être plus récente que la dernière saison déjà suivie.");
+              }
+
+              const itemId = modalItem.id;
+              await addSeasonToItem(itemId, r);
+              const freshRaw = await fetchRawEpisodeData(modalItem, { forceRefresh: true });
+              const progressEpisode = (progress[itemId] && progress[itemId].episode) || 0;
+              fillSeasonsSection(modalItem, freshRaw, progressEpisode);
+              resetAddSeasonPanel();
+              showToast(`Saison ajoutée à "${modalItem.display_title}" !`);
+              await renderAll();
+            } catch (e) {
+              addBtn.disabled = false;
+              addSeasonError.textContent = e.message;
+              addSeasonError.classList.remove("hidden");
+            }
+          });
+        }
+        row.appendChild(addBtn);
+        addSeasonResults.appendChild(row);
+      }
+    } catch (e) {
+      addSeasonStatus.textContent = `Erreur de recherche : ${e.message}`;
+    }
+  }
+
+  addSeasonInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      runAddSeasonSearch();
+    }
+  });
+
+  removeLastSeasonBtn.addEventListener("click", async () => {
+    if (!modalItem) return;
+    const itemId = modalItem.id;
+    removeLastSeasonBtn.disabled = true;
+    try {
+      const raw = await fetchRawEpisodeData(modalItem);
+      const seasons = raw.seasons || [];
+      const lastSeason = seasons[seasons.length - 1];
+      const clampedEpisode = lastSeason ? lastSeason.offsetStart : null;
+      const currentProgress = (progress[itemId] && progress[itemId].episode) || 0;
+
+      let message = `Retirer la dernière saison de "${modalItem.display_title}" ?`;
+      if (typeof clampedEpisode === "number" && currentProgress > clampedEpisode) {
+        message += ` La progression enregistrée (épisode ${currentProgress}) sera ramenée à l'épisode ${clampedEpisode}, la suite appartenant à la saison retirée.`;
+      }
+      if (!confirm(message)) return;
+
+      await removeLastSeason(itemId, clampedEpisode);
+      const freshRaw = await fetchRawEpisodeData(modalItem, { forceRefresh: true });
+      const progressEpisode = (progress[itemId] && progress[itemId].episode) || 0;
+      fillSeasonsSection(modalItem, freshRaw, progressEpisode);
+      showToast(`Saison retirée de "${modalItem.display_title}".`);
+      await renderAll();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      removeLastSeasonBtn.disabled = false;
     }
   });
 }
@@ -2315,6 +2776,39 @@ function initAddPanel() {
   });
 }
 
+/** Filtre en temps réel les cartes de la watchlist (toutes sections
+ * confondues) selon la recherche en cours, sur le titre affiché. Une
+ * section repliée ("À regarder", "Terminé") contenant un résultat
+ * correspondant est automatiquement dépliée, pour ne pas laisser un
+ * résultat invisible derrière un <details> fermé — elle n'est en revanche
+ * jamais repliée automatiquement quand la recherche est effacée, pour ne
+ * pas surprendre l'utilisateur en refermant quelque chose qu'il a ouvert
+ * lui-même entre-temps. */
+function applyWatchlistSearch() {
+  const input = document.getElementById("watchlist-search-input");
+  if (!input) return;
+  const query = input.value.trim().toLowerCase();
+
+  document.querySelectorAll("#main-screen .card").forEach((card) => {
+    const titleEl = card.querySelector(".card-title");
+    const match = !query || (titleEl && titleEl.textContent.toLowerCase().includes(query));
+    card.classList.toggle("search-hidden", !match);
+  });
+
+  if (query) {
+    document.querySelectorAll("#main-screen details.group-collapsible").forEach((details) => {
+      if (details.querySelector(".card:not(.search-hidden)")) {
+        details.open = true;
+      }
+    });
+  }
+}
+
+function initWatchlistSearch() {
+  const input = document.getElementById("watchlist-search-input");
+  input.addEventListener("input", applyWatchlistSearch);
+}
+
 /* Le bootstrap réel ne s'exécute que dans un navigateur (pas lors des
    tests Node, où `document` n'existe pas). */
 if (typeof document !== "undefined") {
@@ -2323,6 +2817,7 @@ if (typeof document !== "undefined") {
     initAddPanel();
     initEpisodeModal();
     initDeleteChoiceModal();
+    initWatchlistSearch();
 
     document.getElementById("btn-refresh").addEventListener("click", boot);
     document.getElementById("btn-settings").addEventListener("click", () => {

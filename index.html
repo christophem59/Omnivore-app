@@ -56,6 +56,10 @@
 
     <div id="load-error" class="error hidden"></div>
 
+    <div class="watchlist-search">
+      <input type="search" id="watchlist-search-input" placeholder="🔎 Rechercher dans la watchlist…" autocomplete="off" />
+    </div>
+
     <section class="group">
       <h2>En cours <span id="count-en-cours" class="section-count"></span></h2>
       <div id="list-en-cours" class="card-list"></div>
@@ -134,6 +138,22 @@
     <p id="episode-modal-airdate" class="hint"></p>
     <p id="episode-modal-summary" class="hint episode-modal-summary hidden"></p>
     <p id="episode-modal-streaming" class="hint"></p>
+
+    <div id="episode-modal-seasons" class="episode-modal-seasons"></div>
+
+    <div id="episode-modal-season-actions" class="season-actions hidden">
+      <button type="button" id="btn-open-add-season" class="small-btn">+ Ajouter une saison</button>
+      <button type="button" id="btn-remove-last-season" class="small-btn danger hidden">🗑 Retirer la dernière saison</button>
+    </div>
+
+    <div id="add-season-panel" class="hidden">
+      <div class="search-row">
+        <input type="text" id="add-season-input" placeholder="Titre de la saison à ajouter…" />
+      </div>
+      <p id="add-season-status" class="hint"></p>
+      <div id="add-season-results" class="result-list"></div>
+      <p id="add-season-error" class="error hidden"></p>
+    </div>
   </div>
 </div>
 
