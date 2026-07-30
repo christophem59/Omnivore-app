@@ -4,21 +4,19 @@ _Dernière mise à jour : 2026-07-30_
 
 ## En cours de traitement
 
-Rien actuellement.
+- Découpage de l'app en catégories (Séries / Animés / Films / Mangas-Scans), affichées en onglets au-dessus de la barre de recherche : phase de maquette design, la logique fonctionnelle derrière (filtrage réel des données par catégorie, etc.) sera abordée une fois la maquette validée.
 
 ## À faire
 
 ### 1. Fonctionnalités transverses
 
 - Vue "cette semaine" façon calendrier.
-- Afficher les ratings dans les résultats de recherche du panneau d'ajout (partie modale de détail traitée séparément, à confirmer avant de la considérer faite).
 
 ### 2. Extension du périmètre
 
 - Suivi des mangas via MangaDex, progression par chapitre.
 - Support des films (vu/pas vu, note).
 - Regroupement des films façon "Collection" (même principe que le regroupement de saisons anime) — nécessite d'abord la logique de suivi des films ci-dessus.
-- Étudier un découpage de l'app en plusieurs parties : Séries / Mangas / Livres.
 - Lecture vidéo intégrée : embarquer les flux de streaming pour visionner directement depuis l'app plutôt que de rediriger vers le service externe. À creuser (faisabilité technique/légale selon les plateformes).
 
 ### 3. Design
@@ -26,10 +24,6 @@ Rien actuellement.
 - Refonte graphique de l'app à partir du design en cours de création suite à l'obtention du logo.
 - Affichage optimisé pour mobile.
 - Barre de progression (section "En cours") : utiliser toute la largeur disponible plutôt qu'une largeur fixe.
-
-### 4. Recherche / inspiration
-
-- Regarder les outils Sickrage/Sonarr/Radarr (suivi de séries/films) pour voir ce qui pourrait compléter/inspirer Omnivore.
 
 ## Hors scope pour l'instant
 
@@ -68,3 +62,6 @@ Rien actuellement.
 - Suppression de la dernière saison depuis la même modale (anime, à partir de 2 saisons), avec ramène automatique de la progression si elle dépassait la saison retirée.
 - Cartes "À jour (suite à venir)" : affichage de la date du prochain épisode connu au-dessus du bouton "Regarder à nouveau" ("Pas de date annoncée" si rien n'est encore programmé).
 - Recherche/tri/filtre dans la watchlist : champ de recherche au-dessus des sections, filtre les cartes en temps réel sur le titre, déplie automatiquement "À regarder"/"Terminé" s'ils contiennent un résultat masqué.
+- Bouton "Ignoré" à côté de "✓ Vu" (cartes "En cours") : passe à l'épisode suivant sans le compter comme vu (épisodes spéciaux), sans apparaître ✓ dans le détail saison/épisode.
+- Ratings affichés à côté du streaming, dans la modale de détail (TVMaze /10, AniList /100) et dans les résultats de recherche du panneau d'ajout.
+- Veille Sickrage/Sonarr/Radarr : a donné le statut "Ignoré", l'idée des ratings, et l'idée de regroupement "Collection" pour les films.
