@@ -1,6 +1,6 @@
 // Incrémenter ce numéro à chaque changement du code de l'app force une
 // invalidation propre de l'ancien cache (voir activate ci-dessous).
-const CACHE_NAME = "suivi-shell-v22";
+const CACHE_NAME = "suivi-shell-v23";
 const APP_SHELL = ["./", "./index.html", "./styles.css", "./app.js", "./manifest.json"];
 
 self.addEventListener("install", (event) => {
@@ -30,8 +30,13 @@ self.addEventListener("fetch", (event) => {
   // du réseau, et met à jour le cache au passage. Le cache ne sert que de
   // secours si le téléphone est hors-ligne. Ça évite de rester bloqué sur une
   // vieille version de l'app après une mise à jour (ce qui vient de nous arriver).
+  // `cache: "no-store"` est nécessaire ici : sans ça, un simple fetch() reste
+  // soumis au cache HTTP habituel du navigateur (GitHub Pages renvoie des
+  // en-têtes Cache-Control avec une durée de vie non nulle), qui peut alors
+  // renvoyer une réponse silencieusement périmée sans repasser par le réseau
+  // — exactement ce qu'on cherche à éviter avec cette stratégie.
   event.respondWith(
-    fetch(event.request)
+    fetch(event.request, { cache: "no-store" })
       .then((resp) => {
         const copy = resp.clone();
         caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
