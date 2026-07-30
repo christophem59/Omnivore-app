@@ -7,6 +7,9 @@
   --text-dim: #9a9a9a;
   --accent: #e50914;
   --accent-2: #2e7d32;
+  --accent-purple: #8b5cf6;
+  --accent-yellow: #eab308;
+  --accent-orange: #f97316;
   --radius: 12px;
 }
 
@@ -75,7 +78,42 @@ main { padding: 16px; max-width: 640px; margin: 0 auto; }
 .group-collapsible > summary::marker { color: var(--text-dim); }
 .group-collapsible .card-list { margin-top: 10px; }
 
-.card-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.subgroup { margin-top: 16px; }
+.subgroup:first-of-type { margin-top: 10px; }
+.subgroup-title {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  margin: 0 0 8px;
+}
+.subgroup-title .subgroup-hint {
+  text-transform: none;
+  letter-spacing: normal;
+  opacity: 0.75;
+}
+
+.section-count {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  opacity: 0.7;
+}
+
+/* Largeur fixe + contenu centré : que la colonne d'actions ait 1 bouton
+   ("Commencer", "Regarder à nouveau") ou 2 ("✓ Vu" + "✎ Ajuster"), elle
+   occupe toujours le même espace, donc les boutons s'alignent en colonne
+   harmonieuse d'une carte à l'autre plutôt que de se décaler selon le
+   contenu. */
+.card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+  width: 170px;
+  flex-shrink: 0;
+}
 
 .card-list { display: flex; flex-direction: column; gap: 10px; }
 .card-list:empty::after {
@@ -94,6 +132,20 @@ main { padding: 16px; max-width: 640px; margin: 0 auto; }
   padding: 12px;
   align-items: center;
   overflow: hidden;
+}
+.card.awaiting-more { border-left: 3px solid var(--accent-2); }
+.card.really-finished { border-left: 3px solid var(--accent-purple); }
+.card.not-started { border-left: 3px solid var(--accent-orange); }
+
+/* Série abandonnée : volontairement en retrait visuel (grisée, bordure en
+   pointillés) pour bien la distinguer des séries "vraiment finies" ou "à
+   jour", qui restent des statuts "actifs". */
+.card.abandoned {
+  opacity: 0.6;
+  border-left: 3px dashed var(--text-dim);
+}
+.card.abandoned img.poster {
+  filter: grayscale(100%);
 }
 
 .card img.poster {
@@ -128,6 +180,49 @@ main { padding: 16px; max-width: 640px; margin: 0 auto; }
 }
 .badge.behind { background: rgba(229,9,20,0.2); color: #ff6b6f; }
 .badge.uptodate { background: rgba(46,125,50,0.2); color: #6fd074; }
+.badge.reallyfinished { background: rgba(139,92,246,0.2); color: #c4b5fd; }
+.badge.abandoned-badge { background: rgba(154,154,154,0.2); color: var(--text-dim); }
+
+.episode-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+.episode-progress-row .badge { margin-top: 0; }
+.episode-progress {
+  display: inline-block;
+  width: 70px;
+  height: 6px;
+  flex-shrink: 0;
+  background: #3a3a3a;
+  border-radius: 999px;
+  overflow: hidden;
+}
+.episode-progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+}
+
+.rewatch-badge {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(46,125,50,0.25);
+  color: #6fd074;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: default;
+}
 
 .progress-row { display: flex; align-items: center; gap: 8px; }
 .progress-row input[type="number"] {
@@ -317,6 +412,39 @@ label input {
 }
 .result-add-btn:disabled { opacity: 0.7; cursor: default; }
 
+.result-select {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.group-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  margin-top: 8px;
+  font-size: 0.85rem;
+}
+.group-bar.hidden { display: none; }
+
+.delete-choice-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+.delete-choice-actions .small-btn {
+  width: 100%;
+  text-align: center;
+}
+
 .panel-label { font-size: 0.9rem; color: var(--text-dim); margin: 0 0 8px; }
 .status-choice { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
 
@@ -361,11 +489,14 @@ label input {
 
 .episode-card {
   align-items: flex-start;
+  border-left: 3px solid var(--accent-yellow);
 }
 .episode-card.upcoming .poster {
   opacity: 0.55;
 }
-.card-body-clickable {
+/* Toute la carte ouvre la modale de détail (hors boutons et compteur de
+   rewatch, qui stoppent la propagation du clic). */
+.card.card-clickable {
   cursor: pointer;
 }
 .badge.episode-tag {
@@ -383,6 +514,11 @@ button.small-btn.primary-inline {
   background: var(--accent);
   border-color: var(--accent);
   color: white;
+  font-weight: 600;
+}
+button.small-btn.watch-again {
+  border: 2px solid var(--accent);
+  color: var(--accent);
   font-weight: 600;
 }
 

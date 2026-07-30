@@ -1,6 +1,6 @@
 // Incrémenter ce numéro à chaque changement du code de l'app force une
 // invalidation propre de l'ancien cache (voir activate ci-dessous).
-const CACHE_NAME = "suivi-shell-v2";
+const CACHE_NAME = "suivi-shell-v22";
 const APP_SHELL = ["./", "./index.html", "./styles.css", "./app.js", "./manifest.json"];
 
 self.addEventListener("install", (event) => {

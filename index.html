@@ -57,18 +57,29 @@
     <div id="load-error" class="error hidden"></div>
 
     <section class="group">
-      <h2>En cours</h2>
+      <h2>En cours <span id="count-en-cours" class="section-count"></span></h2>
       <div id="list-en-cours" class="card-list"></div>
     </section>
 
     <details class="group group-collapsible">
-      <summary>À regarder</summary>
+      <summary>À regarder <span id="count-a-regarder" class="section-count"></span></summary>
       <div id="list-a-regarder" class="card-list"></div>
     </details>
 
     <details class="group group-collapsible">
-      <summary>Terminé</summary>
-      <div id="list-termine" class="card-list"></div>
+      <summary>Terminé <span id="count-termine" class="section-count"></span></summary>
+      <div class="subgroup">
+        <h3 class="subgroup-title">À jour <span class="subgroup-hint">(suite à venir)</span> <span id="count-termine-attente" class="section-count"></span></h3>
+        <div id="list-termine-attente" class="card-list"></div>
+      </div>
+      <div class="subgroup">
+        <h3 class="subgroup-title">Vraiment finies <span id="count-termine-fini" class="section-count"></span></h3>
+        <div id="list-termine-fini" class="card-list"></div>
+      </div>
+      <div class="subgroup">
+        <h3 class="subgroup-title">Abandonné <span id="count-termine-abandonne" class="section-count"></span></h3>
+        <div id="list-termine-abandonne" class="card-list"></div>
+      </div>
     </details>
 
   </section>
@@ -102,6 +113,10 @@
     </div>
 
     <p id="add-search-status" class="hint"></p>
+    <div id="add-group-bar" class="group-bar hidden">
+      <span id="add-group-count"></span>
+      <button type="button" id="btn-add-group" class="small-btn primary-inline">Regrouper en une série</button>
+    </div>
     <div id="add-results" class="result-list"></div>
     <p id="add-error" class="error hidden"></p>
   </div>
@@ -119,6 +134,21 @@
     <p id="episode-modal-airdate" class="hint"></p>
     <p id="episode-modal-summary" class="hint episode-modal-summary hidden"></p>
     <p id="episode-modal-streaming" class="hint"></p>
+  </div>
+</div>
+
+<div id="delete-choice-modal" class="overlay hidden">
+  <div class="overlay-panel">
+    <div class="overlay-header">
+      <h2>Que faire de <span id="delete-choice-title"></span> ?</h2>
+      <button id="btn-delete-choice-close" class="icon-btn" title="Fermer">✕</button>
+    </div>
+    <div class="delete-choice-actions">
+      <button type="button" id="btn-choice-cancel" class="small-btn">Annuler</button>
+      <button type="button" id="btn-choice-pause" class="small-btn">⏸ Mettre en pause</button>
+      <button type="button" id="btn-choice-abandon" class="small-btn">🏳️ Abandonner</button>
+      <button type="button" id="btn-choice-delete" class="small-btn primary-inline">🗑 Supprimer définitivement</button>
+    </div>
   </div>
 </div>
 

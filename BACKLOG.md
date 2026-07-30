@@ -1,6 +1,6 @@
 # Backlog — Omnivore
 
-_Dernière mise à jour : 2026-07-29_
+_Dernière mise à jour : 2026-07-30_
 
 ## En cours de traitement
 
@@ -8,43 +8,38 @@ Rien actuellement.
 
 ## À faire
 
-### 1. Statuts & cycle de vie d'une série
+### 1. Uniformisation des blocs (modale & interactions)
 
-- **Blocs "Terminé" — nettoyage des actions**
-  Retirer tout bouton de la carte elle-même. Dans la modale, ajouter un bouton "Recommencer à regarder" qui remet la progression à 0 et repasse la série en "En cours". Les boutons actuels "Reprendre" et "Marquer comme terminé" deviennent obsolètes et seront à retirer.
-- **Distinguer, dans "Terminé", ce qui est définitivement fini de ce qui attend une suite.**
-  UI à définir.
-- **Ajuster/réinitialiser la progression même quand une série est "Terminé".**
-  Probablement couvert par "Recommencer à regarder" ci-dessus — à confirmer une fois ce point traité.
-- **Nouvelle section "Abandonné".**
-  Règles à définir ; piste envisagée : bascule automatique quand une série "En cours" est supprimée.
-
-### 2. Uniformisation des blocs (modale & interactions)
-
-- **Étendre le fonctionnement "modale"** (déjà en place sur les blocs "En cours") aux blocs "À regarder" et "Terminé".
 - **Blocs "À regarder" : affichage similaire aux blocs "En cours"**, pour valider le visionnage de l'épisode 1 directement depuis le bloc et basculer la série en "En cours".
 - **Déplacer un titre par cliquer-glisser entre "En cours" et "À regarder".**
   Probablement redondant une fois le point ci-dessus traité — à réévaluer à ce moment-là.
 
-### 3. Gestion des saisons
+### 2. Gestion des saisons
 
-- **Gestion propre des saisons multiples** : affichage adapté, et vision des saisons/épisodes dans la modale de série.
+- **Vision des saisons/épisodes dans la modale de série** (le regroupement de plusieurs saisons à l'ajout est fait ; reste l'affichage détaillé saison/épisode dans la modale de détail).
 
-### 4. Fonctionnalités transverses
+### 3. Fonctionnalités transverses
 
 - Vue "cette semaine" façon calendrier.
-- Recherche / tri / filtre dans l'appli.
+- Recherche / tri / filtre parmi les séries déjà dans la watchlist (distinct de la recherche d'ajout de titre).
 - Petites frictions à réduire : marquer "vu" en un tap, file d'attente hors-ligne, export/sauvegarde en un clic.
 
-### 5. Extension du périmètre
+### 4. Extension du périmètre
 
 - Suivi des mangas via MangaDex, progression par chapitre.
 - Support des films (vu/pas vu, note).
 - Étudier un découpage de l'app en plusieurs parties : Séries / Mangas / Livres.
+- Lecture vidéo intégrée : embarquer les flux de streaming pour visionner directement depuis l'app plutôt que de rediriger vers le service externe. À creuser (faisabilité technique/légale selon les plateformes).
 
-### 6. Design
+### 5. Design
 
 - Refonte graphique de l'app à partir du design en cours de création suite à l'obtention du logo.
+- Affichage optimisé pour mobile.
+- Barre de progression (section "En cours") : utiliser toute la largeur disponible plutôt qu'une largeur fixe.
+
+### 6. Recherche / inspiration
+
+- Regarder l'outil Sickrage (suivi de séries) pour voir ce qui pourrait compléter/inspirer Omnivore.
 
 ## Hors scope pour l'instant
 
@@ -64,3 +59,16 @@ Rien actuellement.
 - Correction du passage en "Terminé".
 - Logos de plateformes de streaming avec infobulle.
 - Correction d'un conflit d'écriture (409) sur watchlist.json quand deux titres sont ajoutés quasi simultanément (file d'attente d'écriture + retry automatique).
+- Déclencher la recherche de série via la touche Entrée.
+- Blocs "Terminé" : bouton unique "Regarder à nouveau" (remplace "Reprendre"/"Marquer comme terminé"), remet la progression à 0 ; historique des passages en "Terminé" conservé et affiché en badge de rewatch sur la carte "En cours" résultante.
+- "Terminé" scindé en deux sous-sections : "À jour (suite à venir)" et "Vraiment finies", avec distinction visuelle (bordures/badges colorés).
+- Bascule automatique "En cours" → "Terminé" cohérente dans les deux sens de saisie (bouton "✓ Vu" et ajustement manuel du numéro d'épisode).
+- Modale de détail étendue aux blocs "À regarder" et "Terminé" (résumé traduit en français, date de fin réelle, streaming) ; toute la carte (hors boutons/badge) l'ouvre au clic.
+- Regroupement de plusieurs saisons (recherche anime) en une seule carte de suivi, avec numérotation d'épisode continue.
+- Compteurs du nombre de séries par section/sous-section.
+- Échap ferme les modales ouvertes.
+- Nouvelle section "Abandonné" sous "Terminé" : la poubelle sur une carte "En cours" ouvre une boîte à 4 choix (Annuler / Mettre en pause / Abandonner / Supprimer définitivement) au lieu du simple confirm(). "Mettre en pause" et "Abandonner" conservent la progression ; carte "Abandonné" grisée (bordure pointillée, poster en niveaux de gris) avec bouton "Reprendre" qui repart de la progression conservée (pas de reset à l'épisode 1, contrairement à "Regarder à nouveau").
+- Cartes "À regarder" mises en pause : affichent "Dernier épisode regardé : SxxExx" (ou "épisode N" pour un anime) au lieu de "Pas encore commencé".
+- Bascule automatique "À jour" → "En cours" dès qu'un nouvel épisode non vu est diffusé (détecté au chargement, sans action de l'utilisateur).
+- Cartes "En cours" affichant le dernier épisode connu (sans retard) : mention "Dernier pour l'instant, une suite est prévue" / "Dernier épisode (vraiment)" à la place du vide.
+- Bascule automatique "En cours" → "Terminé"/"À jour" dès que le prochain épisode connu n'est pas encore diffusé (complément symétrique de la bascule ci-dessus) : "En cours" ne garde que les séries où il y a vraiment quelque chose à regarder maintenant.

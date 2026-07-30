@@ -14,6 +14,7 @@ const LS = {
   token: "sv_token",
   posterCache: "sv_poster_cache",
   episodeCache: "sv_episode_cache",
+  summaryCache: "sv_summary_cache",
 };
 
 /* ------------------------- Helpers purs (testables) ------------------------- */
@@ -64,6 +65,15 @@ function formatAnimeLatest(stateEntry) {
   return `Dernier diffusé : épisode ${stateEntry.number}`;
 }
 
+/** Libellé "Dernier épisode regardé" pour une carte "À regarder" dont la
+ * progression n'est pas nulle (ex. titre mis en pause depuis "En cours").
+ * Générique ici (numéro brut) ; buildShowCard le complète en "SxxExx" une
+ * fois la fiche récupérée pour les séries TV. */
+function formatLastWatchedLabel(watchedCount) {
+  if (watchedCount <= 0) return "Pas encore commencé";
+  return `Dernier épisode regardé : épisode ${watchedCount}`;
+}
+
 /** Même logique que scripts/import_csv.py côté Python : id lisible et
  * stable dérivé du titre affiché. */
 function slugify(text) {
@@ -90,11 +100,16 @@ function uniqueId(baseId, existingIds) {
 
 /** Un résultat de recherche est considéré "déjà dans la watchlist" si :
  * - anime avec anilist_id épinglé des deux côtés : comparaison par id exact ;
+ * - anime déjà présent en tant que saison d'un titre regroupé (voir
+ *   addGroupedAnimeItem) : comparaison par id dans `anilist_seasons` ;
  * - sinon : même type + même search_title (insensible à la casse). */
 function isAlreadyAdded(result, items) {
   return items.some((item) => {
     if (result.anilist_id && item.anilist_id) {
       return item.anilist_id === result.anilist_id;
+    }
+    if (result.anilist_id && Array.isArray(item.anilist_seasons)) {
+      return item.anilist_seasons.some((s) => s.anilist_id === result.anilist_id);
     }
     return (
       item.type === result.type &&
@@ -242,7 +257,7 @@ function formatAirdateDisplay(info) {
   } else {
     d = new Date(`${info.airdate}T00:00:00`);
   }
-  const formatted = d.toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" });
+  const formatted = formatDMY(d.getFullYear(), d.getMonth() + 1, d.getDate());
   return info.hasAired ? `Diffusé le ${formatted}` : `À venir le ${formatted}`;
 }
 
@@ -274,6 +289,247 @@ function getStreamingIcon(serviceName) {
   const lower = serviceName.toLowerCase();
   const found = STREAMING_ICON_MAP.find((entry) => lower.includes(entry.match));
   return found ? { slug: found.slug, color: found.color } : null;
+}
+
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+
+/** "JJ/MM/AAAA" : format de date utilisé partout dans l'appli. */
+function formatDMY(year, month, day) {
+  return `${pad2(day)}/${pad2(month)}/${year}`;
+}
+
+/** Date du jour au format "AAAA-MM-JJ" (stockage), utilisée pour horodater
+ * le moment où l'utilisateur marque une série "Terminé". */
+function todayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/** "AAAA-MM-JJ" (stockage) -> "JJ/MM/AAAA" (affichage). */
+function isoToDMY(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  return formatDMY(y, m, d);
+}
+
+/** Historique des dates auxquelles une série a été marquée "Terminé"
+ * (`item.finished_history`), le plus ancien en premier — sert à la fois à
+ * afficher la dernière date et à compter le nombre de fois où la série a
+ * été (re)terminée. Compatible avec l'ancien champ `finished_at` (une
+ * seule date, avant l'introduction de l'historique). */
+function getFinishedHistory(item) {
+  if (Array.isArray(item.finished_history)) return item.finished_history;
+  if (item.finished_at) return [item.finished_at];
+  return [];
+}
+
+/** Date de dernière diffusion réelle d'une série, à partir des données
+ * brutes TVmaze (`ended`) ou AniList (`endDate`, fuzzy : année seule
+ * possible si le jour/mois n'est pas connu). Renvoie `null` si la série
+ * n'est en fait pas terminée côté API (ex. l'utilisateur l'a marquée
+ * "Terminé" alors qu'elle est toujours en diffusion) : c'est au code
+ * appelant de retomber sur le dernier épisode connu dans ce cas plutôt
+ * que d'afficher une fausse info. */
+function formatSeriesEndDate(itemType, raw) {
+  if (itemType === "tv") {
+    if (!raw.ended) return null;
+    const [y, m, d] = raw.ended.split("-").map(Number);
+    return `Diffusée jusqu'au ${formatDMY(y, m, d)}`;
+  }
+  const end = raw.endDate;
+  if (!end || !end.year) return null;
+  if (end.month && end.day) {
+    return `Diffusée jusqu'au ${formatDMY(end.year, end.month, end.day)}`;
+  }
+  return `Diffusée jusqu'en ${end.year}`;
+}
+
+/** Dernier épisode réellement diffusé d'après les données brutes elles-
+ * mêmes (indépendamment de state.json), pour les séries jamais suivies
+ * "en cours" par le bot de notif (state.json n'a alors aucune entrée). */
+function findLastAiredFromRaw(itemType, raw) {
+  if (itemType === "tv") {
+    const today = new Date().toISOString().slice(0, 10);
+    const aired = (raw.episodes || []).filter((e) => e.airdate && e.airdate <= today);
+    if (!aired.length) return null;
+    const last = aired[aired.length - 1];
+    return { season: last.season, number: last.number, airdateIso: last.airdate };
+  }
+  const nowSec = Date.now() / 1000;
+  const aired = (raw.airingSchedule || []).filter((n) => n.airingAt <= nowSec);
+  if (!aired.length) return null;
+  const last = aired.reduce((a, b) => (a.episode > b.episode ? a : b));
+  return { number: last.episode, airingAt: last.airingAt };
+}
+
+/** Libellé "Dernier diffusé : ..." (+ date si on peut la retrouver). Part
+ * de state.json (alimenté par le bot de notif) quand il a une entrée pour
+ * cette série ; sinon (série jamais suivie "en cours", ex. ajoutée
+ * directement en "Terminé") retombe sur le dernier épisode réellement
+ * diffusé calculé à partir des données brutes elles-mêmes, plutôt que de
+ * rester bloqué sur "Pas encore de donnée" alors qu'on a l'info. */
+function formatLastKnownEpisode(itemType, stateEntry, raw) {
+  const base = itemType === "tv" ? formatTvLatest(stateEntry) : formatAnimeLatest(stateEntry);
+
+  if (base !== "Pas encore de donnée" && raw) {
+    if (itemType === "tv") {
+      const ep = (raw.episodes || []).find(
+        (e) => e.season === stateEntry.season && e.number === stateEntry.number
+      );
+      if (ep && ep.airdate) {
+        const [y, m, d] = ep.airdate.split("-").map(Number);
+        return `${base} - le ${formatDMY(y, m, d)}`;
+      }
+      return base;
+    }
+    const node = (raw.airingSchedule || []).find((n) => n.episode === stateEntry.number);
+    if (node) {
+      const d = new Date(node.airingAt * 1000);
+      return `${base} - le ${formatDMY(d.getFullYear(), d.getMonth() + 1, d.getDate())}`;
+    }
+    return base;
+  }
+
+  if (!raw) return base;
+  const found = findLastAiredFromRaw(itemType, raw);
+  if (!found) return base;
+
+  if (itemType === "tv") {
+    const label = `Dernier diffusé : S${pad2(found.season)}E${pad2(found.number)}`;
+    if (!found.airdateIso) return label;
+    const [y, m, d] = found.airdateIso.split("-").map(Number);
+    return `${label} - le ${formatDMY(y, m, d)}`;
+  }
+
+  const label = `Dernier diffusé : épisode ${found.number}`;
+  if (!found.airingAt) return label;
+  const d = new Date(found.airingAt * 1000);
+  return `${label} - le ${formatDMY(d.getFullYear(), d.getMonth() + 1, d.getDate())}`;
+}
+
+/** Libellé affiché pour une carte/modale "Terminé" : si la série l'est
+ * réellement côté API, combine sa date de dernière diffusion avec la date
+ * la plus récente à laquelle l'utilisateur l'a lui-même marquée "Terminé"
+ * (`item.finished_history`, absent pour les titres marqués avant l'ajout
+ * de ce champ — dans ce cas on affiche juste la première partie plutôt
+ * que d'inventer une date). Sinon (série toujours en diffusion dans la
+ * vraie vie), retombe sur le dernier épisode connu. */
+function computeFinishedStatusLabel(item, stateEntry, raw) {
+  const endLabel = formatSeriesEndDate(item.type, raw);
+  if (!endLabel) return formatLastKnownEpisode(item.type, stateEntry, raw);
+  const history = getFinishedHistory(item);
+  if (!history.length) return endLabel;
+  return `${endLabel} - Terminée le ${isoToDMY(history[history.length - 1])}`;
+}
+
+/** Liste (dédupliquée) des services de streaming sur lesquels une série
+ * "Terminé" est/était disponible. Pour les animes, dérivée des liens par
+ * épisode d'AniList (seul endroit où l'info existe côté API) ; pour les
+ * séries TV, TVmaze ne renvoie qu'un seul diffuseur/chaîne pour la fiche. */
+function getSeriesStreamingList(itemType, raw) {
+  if (itemType === "tv") {
+    return raw.streaming ? [raw.streaming] : [];
+  }
+  const sites = new Set();
+  (raw.streamingEpisodesRaw || []).forEach((s) => {
+    if (s.site) sites.add(s.site);
+  });
+  return Array.from(sites).map((name) => ({ name, kind: "streaming" }));
+}
+
+/* ------------------------------ Traduction (résumés) ------------------------------ */
+
+/** TVmaze/AniList ne renvoient les résumés qu'en anglais : on convertit le
+ * HTML simple (<p>, <br>) en paragraphes de texte brut avant traduction,
+ * pour ne pas envoyer de balises à l'API de traduction. */
+function stripHtmlToParagraphs(html) {
+  return html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<[^>]+>/g, "")
+    .split(/\n{2,}/)
+    .map((p) => p.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+}
+
+/** L'API MyMemory limite la longueur d'une requête de traduction : on
+ * découpe les paragraphes trop longs par phrase plutôt qu'au milieu d'un
+ * mot. */
+function chunkText(text, maxLen) {
+  if (text.length <= maxLen) return [text];
+  const sentences = text.match(/[^.!?]+[.!?]*\s*/g) || [text];
+  const chunks = [];
+  let current = "";
+  for (const sentence of sentences) {
+    if (current && (current + sentence).length > maxLen) {
+      chunks.push(current.trim());
+      current = sentence;
+    } else {
+      current += sentence;
+    }
+  }
+  if (current.trim()) chunks.push(current.trim());
+  return chunks;
+}
+
+/** Hash simple (non cryptographique) utilisé comme clé de cache pour les
+ * traductions, pour ne jamais retraduire deux fois le même résumé. */
+function hashText(text) {
+  let h = 0;
+  for (let i = 0; i < text.length; i++) {
+    h = (Math.imul(31, h) + text.charCodeAt(i)) | 0;
+  }
+  return h.toString(36);
+}
+
+function loadSummaryCache() {
+  try {
+    return JSON.parse(localStorage.getItem(LS.summaryCache) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveSummaryCache(cache) {
+  localStorage.setItem(LS.summaryCache, JSON.stringify(cache));
+}
+
+async function translateChunk(text) {
+  if (!text.trim()) return "";
+  const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|fr`;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error("Service de traduction indisponible");
+  const data = await resp.json();
+  return (data.responseData && data.responseData.translatedText) || text;
+}
+
+/** Traduit un résumé (HTML simple) vers le français via MyMemory, avec
+ * mise en cache locale (les résumés ne changent pas) pour éviter de
+ * retraduire à chaque ouverture de modale et de gaspiller le quota gratuit. */
+async function translateToFrench(html) {
+  if (!html) return "";
+  const cache = loadSummaryCache();
+  const key = hashText(html);
+  if (cache[key]) return cache[key].fr;
+
+  const paragraphs = stripHtmlToParagraphs(html);
+  if (!paragraphs.length) return "";
+
+  const translatedParagraphs = [];
+  for (const paragraph of paragraphs) {
+    const chunks = chunkText(paragraph, 480);
+    const translatedChunks = [];
+    for (const chunk of chunks) {
+      translatedChunks.push(await translateChunk(chunk));
+    }
+    translatedParagraphs.push(translatedChunks.join(" "));
+  }
+  const result = translatedParagraphs.map((p) => `<p>${p}</p>`).join("");
+
+  const freshCache = loadSummaryCache();
+  freshCache[key] = { fr: result, ts: Date.now() };
+  saveSummaryCache(freshCache);
+  return result;
 }
 
 /* ------------------------------ Store GitHub ------------------------------ */
@@ -421,46 +677,130 @@ async function fetchTvRaw(item) {
     ? { name: show.network.name, kind: "broadcast" }
     : null;
 
-  return { episodes, status: show.status, streaming };
+  return { episodes, status: show.status, streaming, summary: show.summary || null, ended: show.ended || null };
 }
 
-/** Équivalent anime. Épingle anilist_id automatiquement si absent. */
-async function fetchAnimeRaw(item) {
-  const anilistId = item.anilist_id;
+/** Requête AniList brute pour une seule fiche (une saison), par id ou par
+ * recherche texte. Factorisé pour être réutilisé aussi bien pour un item
+ * anime "simple" que pour chacune des saisons d'un item groupé (voir
+ * fetchAnimeRawGrouped). */
+async function queryAnilistMedia({ id, search, label }) {
   const query = `
     query ($id: Int, $search: String) {
       Media(id: $id, search: $search, type: ANIME) {
         id
         status
         episodes
+        description
+        endDate { year month day }
         nextAiringEpisode { episode airingAt }
         airingSchedule(perPage: 50) { nodes { episode airingAt } }
         streamingEpisodes { title url site }
       }
     }`;
-  const variables = anilistId ? { id: anilistId } : { search: item.search_title };
+  const variables = id ? { id } : { search };
   const resp = await fetch("https://graphql.anilist.co", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ query, variables }),
   });
-  if (!resp.ok) throw new Error(`AniList : indisponible pour ${item.display_title}`);
+  if (!resp.ok) throw new Error(`AniList : indisponible pour ${label}`);
   const payload = await resp.json();
   const media = payload.data && payload.data.Media;
-  if (!media) throw new Error(`AniList : aucune fiche trouvée pour ${item.display_title}`);
+  if (!media) throw new Error(`AniList : aucune fiche trouvée pour ${label}`);
+  return media;
+}
 
-  if (!anilistId) {
-    item.anilist_id = media.id;
-    await store.putFile("watchlist.json", watchlist, `Épinglage anilist_id : ${item.id}`);
-  }
-
+function mapAnilistMediaToRaw(media) {
   return {
     status: media.status,
     totalEpisodes: media.episodes,
+    description: media.description || null,
+    endDate: media.endDate || null,
     nextAiringEpisode: media.nextAiringEpisode,
     airingSchedule: (media.airingSchedule && media.airingSchedule.nodes) || [],
     streamingEpisodesRaw: media.streamingEpisodes || [],
   };
+}
+
+/** Équivalent TV de fetchTvRaw pour un titre anime regroupant plusieurs
+ * saisons (chacune une fiche AniList distincte, voir addGroupedAnimeItem) :
+ * fusionne les saisons dans un seul objet "brut", avec une numérotation
+ * d'épisode continue à travers les saisons (saison 2 épisode 1 = épisode
+ * global N+1 où N est le total de la saison 1), pour que le reste du
+ * calcul (deriveAnimeEpisodeInfo, etc.) n'ait pas à connaître la notion de
+ * saison. Dès qu'une saison a un total d'épisodes inconnu (rare : saison
+ * antérieure toujours listée "en cours" sur AniList), on arrête de fusionner
+ * les données de planning des saisons suivantes plutôt que de placer des
+ * épisodes à un numéro global potentiellement faux. */
+async function fetchAnimeRawGrouped(item) {
+  const seasonsMedia = await Promise.all(
+    item.anilist_seasons.map((season) =>
+      queryAnilistMedia({ id: season.anilist_id, label: season.search_title || item.display_title })
+    )
+  );
+  const seasonsData = seasonsMedia.map(mapAnilistMediaToRaw);
+
+  let offset = 0;
+  let offsetReliable = true;
+  const airingSchedule = [];
+  const streamingEpisodesRaw = [];
+  let nextAiringEpisode = null;
+
+  seasonsData.forEach((season, idx) => {
+    const isLast = idx === seasonsData.length - 1;
+    if (offsetReliable) {
+      season.airingSchedule.forEach((node) => {
+        airingSchedule.push({ episode: node.episode + offset, airingAt: node.airingAt });
+      });
+      if (isLast && season.nextAiringEpisode) {
+        nextAiringEpisode = {
+          episode: season.nextAiringEpisode.episode + offset,
+          airingAt: season.nextAiringEpisode.airingAt,
+        };
+      }
+    }
+    streamingEpisodesRaw.push(...season.streamingEpisodesRaw);
+
+    if (typeof season.totalEpisodes === "number") {
+      offset += season.totalEpisodes;
+    } else {
+      offsetReliable = false;
+    }
+  });
+
+  const last = seasonsData[seasonsData.length - 1];
+  return {
+    status: last.status,
+    totalEpisodes: offsetReliable ? offset : null,
+    description: last.description,
+    endDate: last.status === "FINISHED" ? last.endDate : null,
+    nextAiringEpisode,
+    airingSchedule,
+    streamingEpisodesRaw,
+  };
+}
+
+/** Équivalent anime de fetchTvRaw. Épingle anilist_id automatiquement si
+ * absent (titre "simple", une seule saison). Les titres regroupant
+ * plusieurs saisons (`anilist_seasons`) passent par fetchAnimeRawGrouped. */
+async function fetchAnimeRaw(item) {
+  if (Array.isArray(item.anilist_seasons) && item.anilist_seasons.length) {
+    return fetchAnimeRawGrouped(item);
+  }
+
+  const media = await queryAnilistMedia({
+    id: item.anilist_id,
+    search: item.search_title,
+    label: item.display_title,
+  });
+
+  if (!item.anilist_id) {
+    item.anilist_id = media.id;
+    await store.putFile("watchlist.json", watchlist, `Épinglage anilist_id : ${item.id}`);
+  }
+
+  return mapAnilistMediaToRaw(media);
 }
 
 async function fetchRawEpisodeData(item, { forceRefresh } = {}) {
@@ -585,10 +925,29 @@ function showToast(message) {
   }, 3500);
 }
 
-/** Carte "série" classique (affiches + statut), utilisée pour les sections
- * À regarder et Terminé. La section En cours utilise buildEpisodeCard. */
+/** Toast affiché quand une série vient d'être marquée "Terminé" : distingue
+ * si elle est réellement finie (rien de plus à venir, même critère que
+ * pour le classement "Vraiment finies"/"À jour") ou si elle va atterrir en
+ * "À jour" (une suite est prévue) — pour ne pas dire "terminé" alors que
+ * la série continue. */
+function showFinishedStatusToast(item, raw) {
+  if (formatSeriesEndDate(item.type, raw)) {
+    showToast(`"${item.display_title}" terminé !`);
+  } else {
+    showToast(`Vous êtes à jour sur "${item.display_title}", la suite arrive !`);
+  }
+}
+
+/** Carte "série" classique (affiche + statut) pour la section À regarder.
+ * Comme pour les cartes épisode, le corps de la carte est cliquable et
+ * ouvre la modale de détail ; les boutons d'action internes stoppent la
+ * propagation pour ne pas déclencher l'ouverture de la modale en même
+ * temps. La section Terminé a sa propre carte (buildFinishedCard),
+ * puisqu'elle a besoin de la fiche complète *avant* de savoir dans quel
+ * sous-groupe elle va (voir renderFinishedGroups). */
 async function buildShowCard(item) {
-  const card = el("div", "card");
+  const card = el("div", "card not-started card-clickable");
+  card.addEventListener("click", () => openUpcomingModal(item));
 
   const img = el("img", "poster");
   img.alt = item.display_title;
@@ -600,44 +959,197 @@ async function buildShowCard(item) {
   const body = el("div", "card-body");
   body.appendChild(el("p", "card-title", item.display_title));
 
-  const stateEntry = state[item.id];
+  // Une progression existante (titre mis en pause depuis "En cours", voir
+  // pauseWatching) veut dire que ce n'est pas un premier démarrage : on
+  // affiche le dernier épisode regardé plutôt que "Pas encore commencé".
+  const watchedCount = (progress[item.id] && progress[item.id].episode) || 0;
+  const subEl = el("p", "card-sub", formatLastWatchedLabel(watchedCount));
+  body.appendChild(subEl);
 
-  if (item.status === "a_regarder") {
-    body.appendChild(el("p", "card-sub", "Pas encore commencé"));
-    const startBtn = el("button", "small-btn", "Commencer");
-    startBtn.addEventListener("click", async () => {
-      startBtn.textContent = "…";
-      startBtn.disabled = true;
-      try {
-        await startWatching(item.id);
-      } catch (e) {
-        alert(e.message);
-      }
-      renderAll();
-    });
-    body.appendChild(startBtn);
-  } else if (item.status === "termine") {
-    const latestLabel = item.type === "tv" ? formatTvLatest(stateEntry) : formatAnimeLatest(stateEntry);
-    body.appendChild(el("p", "card-sub", latestLabel));
-    const resumeBtn = el("button", "small-btn", "Reprendre");
-    resumeBtn.addEventListener("click", async () => {
-      resumeBtn.disabled = true;
-      try {
-        await resumeWatching(item.id);
-        await renderAll();
-      } catch (e) {
-        alert(e.message);
-        resumeBtn.disabled = false;
-      }
-    });
-    body.appendChild(resumeBtn);
+  if (watchedCount > 0 && item.type === "tv") {
+    // Numéro générique affiché tout de suite, remplacé par "SxxExx" une
+    // fois la fiche récupérée (souvent déjà en cache si le titre était
+    // "En cours" il y a peu).
+    fetchRawEpisodeData(item)
+      .then((raw) => {
+        const ep = raw.episodes && raw.episodes[watchedCount - 1];
+        if (ep) {
+          subEl.textContent = `Dernier épisode regardé : S${pad2(ep.season)}E${pad2(ep.number)}`;
+        }
+      })
+      .catch(() => {
+        // on garde le libellé générique déjà affiché
+      });
   }
 
   card.appendChild(body);
 
+  // Même colonne d'actions et même style (bordure rouge) que "Regarder à
+  // nouveau" sur les cartes "Terminé" : les deux boutons font basculer
+  // une carte vers "En cours" et méritent d'être visuellement cohérents.
+  const actions = el("div", "card-actions");
+  const startBtn = el("button", "small-btn watch-again", "Commencer");
+  startBtn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    startBtn.textContent = "…";
+    startBtn.disabled = true;
+    try {
+      await startWatching(item.id);
+      showToast(`"${item.display_title}" : c'est parti !`);
+    } catch (e) {
+      alert(e.message);
+    }
+    renderAll();
+  });
+  actions.appendChild(startBtn);
+  card.appendChild(actions);
+
   const deleteBtn = el("button", "card-delete", "🗑");
   deleteBtn.title = "Retirer ce titre";
-  deleteBtn.addEventListener("click", async () => {
+  deleteBtn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const ok = confirm(`Retirer "${item.display_title}" de la watchlist ?`);
+    if (!ok) return;
+    deleteBtn.disabled = true;
+    try {
+      await removeItem(item.id);
+      await renderAll();
+    } catch (e) {
+      alert(e.message);
+      deleteBtn.disabled = false;
+    }
+  });
+  card.appendChild(deleteBtn);
+
+  return card;
+}
+
+/** Carte pour une série "Terminé". `raw` est déjà résolu au moment de
+ * l'appel (voir renderFinishedGroups) puisqu'il faut savoir si la série
+ * est réellement finie *avant* de choisir dans quel sous-groupe la
+ * ranger ; `reallyFinished` pilote à la fois ce choix et le badge visuel
+ * "À jour". */
+async function buildFinishedCard(item, raw, reallyFinished) {
+  const card = el("div", "card card-clickable");
+  card.classList.add(reallyFinished ? "really-finished" : "awaiting-more");
+
+  const stateEntry = state[item.id];
+  card.addEventListener("click", () => openFinishedModal(item, stateEntry));
+
+  const img = el("img", "poster");
+  img.alt = item.display_title;
+  card.appendChild(img);
+  getPoster(item).then((url) => {
+    if (url) img.src = url;
+  });
+
+  const body = el("div", "card-body");
+  body.appendChild(el("p", "card-title", item.display_title));
+
+  const label = raw
+    ? computeFinishedStatusLabel(item, stateEntry, raw)
+    : item.type === "tv"
+    ? formatTvLatest(stateEntry)
+    : formatAnimeLatest(stateEntry);
+  body.appendChild(el("p", "card-sub", label));
+
+  if (reallyFinished) {
+    body.appendChild(el("span", "badge reallyfinished", "Série vraiment finie"));
+  } else {
+    body.appendChild(el("span", "badge uptodate", "À jour · suite à venir"));
+  }
+
+  card.appendChild(body);
+
+  // Colonne d'actions séparée du corps de la carte, comme sur les cartes
+  // "En cours" (✓ Vu / ✎ Ajuster) : le bouton s'aligne ainsi sur la même
+  // colonne verticale plutôt que d'être coincé sous le texte.
+  const actions = el("div", "card-actions");
+  const watchAgainBtn = el("button", "small-btn watch-again", "Regarder à nouveau");
+  watchAgainBtn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    watchAgainBtn.disabled = true;
+    try {
+      await watchAgain(item.id);
+      showToast(`"${item.display_title}" : c'est reparti depuis l'épisode 1 !`);
+      await renderAll();
+    } catch (e) {
+      alert(e.message);
+      watchAgainBtn.disabled = false;
+    }
+  });
+  actions.appendChild(watchAgainBtn);
+  card.appendChild(actions);
+
+  const deleteBtn = el("button", "card-delete", "🗑");
+  deleteBtn.title = "Retirer ce titre";
+  deleteBtn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const ok = confirm(`Retirer "${item.display_title}" de la watchlist ?`);
+    if (!ok) return;
+    deleteBtn.disabled = true;
+    try {
+      await removeItem(item.id);
+      await renderAll();
+    } catch (e) {
+      alert(e.message);
+      deleteBtn.disabled = false;
+    }
+  });
+  card.appendChild(deleteBtn);
+
+  return card;
+}
+
+/** Carte pour un titre "Terminé" / "Abandonné". Contrairement aux deux
+ * autres sous-groupes, l'abandon est un choix de l'utilisateur (pas une
+ * fiche à vérifier auprès de l'API) : pas de fetch réseau, juste le
+ * dernier épisode enregistré et un bouton pour reprendre là où on s'était
+ * arrêté (contrairement à "Regarder à nouveau", qui repart de zéro). */
+async function buildAbandonedCard(item) {
+  const card = el("div", "card abandoned card-clickable");
+
+  const stateEntry = state[item.id];
+  card.addEventListener("click", () => openFinishedModal(item, stateEntry));
+
+  const img = el("img", "poster");
+  img.alt = item.display_title;
+  card.appendChild(img);
+  getPoster(item).then((url) => {
+    if (url) img.src = url;
+  });
+
+  const body = el("div", "card-body");
+  body.appendChild(el("p", "card-title", item.display_title));
+
+  const watched = (progress[item.id] && progress[item.id].episode) || 0;
+  const label = watched > 0 ? `Abandonnée à l'épisode ${watched}` : "Abandonnée avant le premier épisode";
+  body.appendChild(el("p", "card-sub", label));
+  body.appendChild(el("span", "badge abandoned-badge", "Abandonné"));
+
+  card.appendChild(body);
+
+  const actions = el("div", "card-actions");
+  const resumeBtn = el("button", "small-btn watch-again", "Reprendre");
+  resumeBtn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    resumeBtn.disabled = true;
+    try {
+      await resumeAbandoned(item.id);
+      showToast(`"${item.display_title}" : on reprend où tu t'étais arrêté !`);
+      await renderAll();
+    } catch (e) {
+      alert(e.message);
+      resumeBtn.disabled = false;
+    }
+  });
+  actions.appendChild(resumeBtn);
+  card.appendChild(actions);
+
+  const deleteBtn = el("button", "card-delete", "🗑");
+  deleteBtn.title = "Retirer ce titre";
+  deleteBtn.addEventListener("click", async (e) => {
+    e.stopPropagation();
     const ok = confirm(`Retirer "${item.display_title}" de la watchlist ?`);
     if (!ok) return;
     deleteBtn.disabled = true;
@@ -658,6 +1170,10 @@ async function buildShowCard(item) {
  * représente le prochain épisode non vu, pas la série dans son ensemble. */
 async function buildEpisodeCard(item) {
   const card = el("div", "card episode-card");
+  // Référence à la barre de progression (si affichée), pour aligner le
+  // badge de rewatch dessus une fois la carte attachée au DOM (voir plus
+  // bas). Reste `null` quand il n'y a pas de retard à afficher.
+  let progressBarEl = null;
 
   let info;
   try {
@@ -669,11 +1185,9 @@ async function buildEpisodeCard(item) {
     card.appendChild(body);
     const deleteBtn = el("button", "card-delete", "🗑");
     deleteBtn.title = "Retirer ce titre";
-    deleteBtn.addEventListener("click", async () => {
-      const ok = confirm(`Retirer "${item.display_title}" de la watchlist ?`);
-      if (!ok) return;
-      await removeItem(item.id);
-      await renderAll();
+    deleteBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openDeleteChoiceModal(item);
     });
     card.appendChild(deleteBtn);
     return card;
@@ -697,8 +1211,9 @@ async function buildEpisodeCard(item) {
     confirmBtn.addEventListener("click", async () => {
       confirmBtn.disabled = true;
       try {
+        const raw = await fetchRawEpisodeData(item); // déjà en cache, vient de servir à calculer `info`
         await markFinished(item.id);
-        showToast(`"${item.display_title}" terminé !`);
+        showFinishedStatusToast(item, raw);
         await renderAll();
       } catch (e) {
         alert(e.message);
@@ -710,17 +1225,19 @@ async function buildEpisodeCard(item) {
 
     const deleteBtn = el("button", "card-delete", "🗑");
     deleteBtn.title = "Retirer ce titre";
-    deleteBtn.addEventListener("click", async () => {
-      const ok = confirm(`Retirer "${item.display_title}" de la watchlist ?`);
-      if (!ok) return;
-      await removeItem(item.id);
-      await renderAll();
+    deleteBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openDeleteChoiceModal(item);
     });
     card.appendChild(deleteBtn);
     return card;
   }
 
   if (!info.hasAired) card.classList.add("upcoming");
+  if (!info.unknown) {
+    card.classList.add("card-clickable");
+    card.addEventListener("click", () => openEpisodeModal(item, info));
+  }
 
   const img = el("img", "poster");
   img.alt = item.display_title;
@@ -729,7 +1246,7 @@ async function buildEpisodeCard(item) {
     if (url) img.src = url;
   });
 
-  const clickableArea = el("div", "card-body card-body-clickable");
+  const clickableArea = el("div", "card-body");
   clickableArea.appendChild(el("p", "card-title", item.display_title));
 
   const tag = el("span", "badge episode-tag", formatEpisodeTag(item.type, info));
@@ -738,12 +1255,48 @@ async function buildEpisodeCard(item) {
   clickableArea.appendChild(el("p", "card-sub", formatAirdateDisplay(info)));
 
   if (info.extraBehind > 0) {
-    clickableArea.appendChild(el("span", "badge behind", `+${info.extraBehind} autres épisodes en attente`));
+    const row = el("div", "episode-progress-row");
+    row.appendChild(el("span", "badge behind", `${info.extraBehind} épisodes restants`));
+
+    // Avancée globale sur la série (épisodes vus / total connu), pas
+    // seulement le retard immédiat affiché ci-dessus. Repli sur le nombre
+    // d'épisodes déjà diffusés si le total final n'est pas encore connu
+    // (ex. anime toujours en cours de diffusion).
+    const watchedCount = (progress[item.id] && progress[item.id].episode) || 0;
+    const totalForBar =
+      typeof info.totalCount === "number" && info.totalCount > 0 ? info.totalCount : info.airedCount;
+    if (typeof totalForBar === "number" && totalForBar > 0) {
+      const pct = Math.max(0, Math.min(100, (watchedCount / totalForBar) * 100));
+      const bar = el("span", "episode-progress");
+      bar.title = `${watchedCount} / ${totalForBar} épisode(s) vu(s)`;
+      const fill = el("span", "episode-progress-fill");
+      fill.style.width = `${pct}%`;
+      bar.appendChild(fill);
+      row.appendChild(bar);
+      progressBarEl = bar;
+    }
+
+    clickableArea.appendChild(row);
+  } else if (info.hasAired && !info.unknown) {
+    // Aucun retard : l'épisode affiché est le dernier connu déjà diffusé.
+    // Plutôt que de ne rien afficher, précise si une suite est prévue ou
+    // si c'est vraiment la fin (même critère que "Vraiment finies" vs "À
+    // jour" côté "Terminé").
+    try {
+      const raw = await fetchRawEpisodeData(item); // déjà en cache, vient de servir à calculer `info`
+      const reallyFinished = formatSeriesEndDate(item.type, raw) !== null;
+      clickableArea.appendChild(
+        el(
+          "span",
+          reallyFinished ? "badge reallyfinished" : "badge uptodate",
+          reallyFinished ? "Dernier épisode (vraiment)" : "Dernier pour l'instant, une suite est prévue"
+        )
+      );
+    } catch {
+      // pas de mention si la fiche n'est pas disponible, plutôt que planter la carte
+    }
   }
 
-  if (!info.unknown) {
-    clickableArea.addEventListener("click", () => openEpisodeModal(item, info));
-  }
   card.appendChild(clickableArea);
 
   const actions = el("div", "card-actions");
@@ -754,8 +1307,9 @@ async function buildEpisodeCard(item) {
       e.stopPropagation();
       watchedBtn.disabled = true;
       try {
-        await flashWatched(card);
-        await markEpisodeWatched(item);
+        // En parallèle plutôt qu'en séquence : l'animation ne doit pas
+        // retarder la mise à jour du numéro d'épisode affiché.
+        await Promise.all([flashWatched(card), markEpisodeWatched(item)]);
       } catch (err) {
         alert(err.message);
         watchedBtn.disabled = false;
@@ -766,7 +1320,7 @@ async function buildEpisodeCard(item) {
 
   const adjustBtn = el("button", "small-btn", "✎ Ajuster");
   adjustBtn.title = "Corriger manuellement le numéro d'épisode vu";
-  adjustBtn.addEventListener("click", (e) => {
+  adjustBtn.addEventListener("click", async (e) => {
     e.stopPropagation();
     const current = (progress[item.id] && progress[item.id].episode) || 0;
     const maxAllowed = typeof info.airedCount === "number" ? info.airedCount : null;
@@ -784,9 +1338,16 @@ async function buildEpisodeCard(item) {
       );
       return;
     }
-    updateProgress(item.id, parsed)
-      .then(renderAll)
-      .catch((err) => alert(err.message));
+    try {
+      // Même bascule automatique vers "Terminé" que le bouton "✓ Vu" si ce
+      // numéro correspond à la fin de la série connue (ex. 180 pour une
+      // série qui en compte exactement 180).
+      const raw = await fetchRawEpisodeData(item);
+      await applyEpisodeProgress(item, parsed, raw);
+      await renderAll();
+    } catch (err) {
+      alert(err.message);
+    }
   });
   actions.appendChild(adjustBtn);
 
@@ -794,27 +1355,121 @@ async function buildEpisodeCard(item) {
 
   const deleteBtn = el("button", "card-delete", "🗑");
   deleteBtn.title = "Retirer ce titre";
-  deleteBtn.addEventListener("click", async (e) => {
+  deleteBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    const ok = confirm(`Retirer "${item.display_title}" de la watchlist ?`);
-    if (!ok) return;
-    deleteBtn.disabled = true;
-    try {
-      await removeItem(item.id);
-      await renderAll();
-    } catch (err) {
-      alert(err.message);
-      deleteBtn.disabled = false;
-    }
+    openDeleteChoiceModal(item);
   });
   card.appendChild(deleteBtn);
+
+  // Compteur de rewatchs : uniquement pour les séries réellement finies
+  // (pas de sens pour une série "à jour" toujours en diffusion) déjà
+  // marquées "Terminé" au moins une fois par le passé. Best effort : pas
+  // de badge si la fiche complète n'est pas disponible, plutôt que de
+  // planter la carte pour un détail secondaire.
+  const history = getFinishedHistory(item);
+  if (history.length) {
+    try {
+      const raw = await fetchRawEpisodeData(item);
+      if (formatSeriesEndDate(item.type, raw)) {
+        const badge = el("span", "rewatch-badge", String(history.length));
+        badge.title = `Marquée "Terminé" le :\n${history.map(isoToDMY).join("\n")}`;
+        // N'ouvre pas la modale : c'est une info secondaire, pas une action.
+        badge.addEventListener("click", (e) => e.stopPropagation());
+        card.appendChild(badge);
+
+        // Alignement précis (même ligne que la barre de progression, même
+        // colonne que l'icône poubelle) : dépend du rendu réel de la carte
+        // une fois attachée au DOM, donc mesuré plutôt que deviné en CSS.
+        // Sans barre de progression affichée, on garde le repli "coin
+        // bas-droit" défini en CSS.
+        requestAnimationFrame(() => {
+          if (progressBarEl) {
+            badge.style.top = `${
+              progressBarEl.offsetTop + progressBarEl.offsetHeight / 2 - badge.offsetHeight / 2
+            }px`;
+            badge.style.bottom = "auto";
+          }
+          badge.style.left = `${
+            deleteBtn.offsetLeft + deleteBtn.offsetWidth / 2 - badge.offsetWidth / 2
+          }px`;
+          badge.style.right = "auto";
+        });
+      }
+    } catch {
+      // ignore
+    }
+  }
 
   return card;
 }
 
-function openEpisodeModal(item, info) {
-  const modal = document.getElementById("episode-modal");
-  const posterEl = document.getElementById("episode-modal-poster");
+function showEpisodeModal() {
+  document.getElementById("episode-modal").classList.remove("hidden");
+}
+
+/** Affiche une liste de services de streaming (0, 1 ou plusieurs) dans la
+ * modale. Factorisé pour être réutilisé aussi bien par la modale
+ * "prochain épisode" (0 ou 1 service) que par la modale "Terminé" (peut en
+ * avoir plusieurs, côté anime). */
+function renderStreamingList(streamingEl, list) {
+  streamingEl.innerHTML = "";
+  if (!list.length) {
+    streamingEl.textContent = "Streaming légal : non disponible";
+    return;
+  }
+
+  const prefix = list.length === 1 && list[0].kind === "broadcast" ? "Diffusé sur : " : "Disponible sur : ";
+  streamingEl.appendChild(document.createTextNode(prefix));
+
+  for (const entry of list) {
+    const icon = getStreamingIcon(entry.name);
+    if (icon) {
+      const img = document.createElement("img");
+      img.className = "streaming-logo";
+      img.src = `https://cdn.simpleicons.org/${icon.slug}/${icon.color}`;
+      img.alt = entry.name;
+      img.title = entry.name;
+      img.onerror = () => {
+        const fallback = el("span", "streaming-fallback", entry.name);
+        fallback.title = entry.name;
+        img.replaceWith(fallback);
+      };
+      streamingEl.appendChild(img);
+    } else {
+      const fallback = el("span", "streaming-fallback", entry.name);
+      fallback.title = entry.name;
+      streamingEl.appendChild(fallback);
+    }
+  }
+}
+
+/** Traduit un résumé en anglais (HTML simple) et l'injecte dans la modale
+ * une fois prêt, sans bloquer le reste de l'affichage (comme pour
+ * l'affiche, chargée elle aussi de façon asynchrone). En cas d'échec de
+ * traduction, retombe sur le résumé original plutôt que de rester bloqué
+ * sur "Traduction…". */
+function fillTranslatedSummary(summaryEl, rawSummary) {
+  if (!rawSummary) {
+    summaryEl.textContent = "";
+    summaryEl.classList.add("hidden");
+    return;
+  }
+  summaryEl.textContent = "Traduction…";
+  summaryEl.classList.remove("hidden");
+  translateToFrench(rawSummary)
+    .then((fr) => {
+      summaryEl.innerHTML = fr;
+    })
+    .catch(() => {
+      summaryEl.innerHTML = rawSummary;
+    });
+}
+
+/** Remplit la modale de détail avec les infos "prochain épisode" (utilisé
+ * pour En cours, et pour À regarder une fois l'épisode 1 récupéré). Ne
+ * gère volontairement pas l'affichage de la modale elle-même, pour pouvoir
+ * l'ouvrir immédiatement avec un état "Chargement…" pendant le fetch. */
+function fillEpisodeModalContent(item, info) {
   const titleEl = document.getElementById("episode-modal-title");
   const tagEl = document.getElementById("episode-modal-tag");
   const airdateEl = document.getElementById("episode-modal-airdate");
@@ -825,48 +1480,95 @@ function openEpisodeModal(item, info) {
   tagEl.textContent = formatEpisodeTag(item.type, info);
   airdateEl.textContent = formatAirdateDisplay(info);
 
-  if (item.type === "tv" && info.summary) {
-    // Le résumé TVmaze est du HTML simple (souvent juste des <p>).
-    summaryEl.innerHTML = info.summary;
-    summaryEl.classList.remove("hidden");
-  } else {
-    summaryEl.textContent = "";
-    summaryEl.classList.add("hidden");
-  }
+  fillTranslatedSummary(summaryEl, item.type === "tv" ? info.summary : null);
+  renderStreamingList(streamingEl, info.streaming ? [info.streaming] : []);
+}
 
-  streamingEl.innerHTML = "";
-  if (info.streaming) {
-    const prefix = info.streaming.kind === "broadcast" ? "Diffusé sur : " : "Disponible sur : ";
-    streamingEl.appendChild(document.createTextNode(prefix));
-
-    const icon = getStreamingIcon(info.streaming.name);
-    if (icon) {
-      const img = document.createElement("img");
-      img.className = "streaming-logo";
-      img.src = `https://cdn.simpleicons.org/${icon.slug}/${icon.color}`;
-      img.alt = info.streaming.name;
-      img.title = info.streaming.name;
-      img.onerror = () => {
-        const fallback = el("span", "streaming-fallback", info.streaming.name);
-        fallback.title = info.streaming.name;
-        img.replaceWith(fallback);
-      };
-      streamingEl.appendChild(img);
-    } else {
-      const fallback = el("span", "streaming-fallback", info.streaming.name);
-      fallback.title = info.streaming.name;
-      streamingEl.appendChild(fallback);
-    }
-  } else {
-    streamingEl.textContent = "Streaming légal : non disponible";
-  }
-
+function setModalPoster(item) {
+  const posterEl = document.getElementById("episode-modal-poster");
   posterEl.src = "";
   getPoster(item).then((url) => {
     if (url) posterEl.src = url;
   });
+}
 
-  modal.classList.remove("hidden");
+function openEpisodeModal(item, info) {
+  fillEpisodeModalContent(item, info);
+  setModalPoster(item);
+  showEpisodeModal();
+}
+
+/** Modale de détail pour une carte "À regarder" : montre les infos du tout
+ * premier épisode (comme pour En cours, la progression n'existe pas encore
+ * donc getNextEpisodeInfo renvoie naturellement l'épisode 1). Ouvre la
+ * modale tout de suite avec un état "Chargement…" le temps du fetch réseau,
+ * plutôt que de faire attendre le clic. */
+async function openUpcomingModal(item) {
+  document.getElementById("episode-modal-title").textContent = item.display_title;
+  document.getElementById("episode-modal-tag").textContent = "";
+  document.getElementById("episode-modal-airdate").textContent = "Chargement…";
+  document.getElementById("episode-modal-summary").classList.add("hidden");
+  document.getElementById("episode-modal-streaming").textContent = "";
+  setModalPoster(item);
+  showEpisodeModal();
+
+  try {
+    const info = await getNextEpisodeInfo(item);
+    if (info.kind === "finished") {
+      // Cas rare : une série "à regarder" dont la fiche externe n'a déjà
+      // plus rien à proposer (ex. série annulée après un seul épisode).
+      document.getElementById("episode-modal-tag").textContent = "Terminé";
+      document.getElementById("episode-modal-airdate").textContent = "Aucun épisode disponible.";
+      return;
+    }
+    fillEpisodeModalContent(item, info);
+  } catch (e) {
+    document.getElementById("episode-modal-airdate").textContent = `Impossible de récupérer les épisodes : ${e.message}`;
+  }
+}
+
+/** Modale de détail pour une carte "Terminé" : pas de notion de "prochain
+ * épisode", donc pas de réutilisation de getNextEpisodeInfo. On récupère
+ * directement la fiche complète (résumé, date de fin, diffuseur(s)) via
+ * fetchRawEpisodeData, qui partage son cache avec le reste de l'appli. Le
+ * dernier épisode connu (`stateEntry`, depuis state.json) s'affiche tout
+ * de suite, remplacé par la bonne mention une fois le fetch résolu. */
+async function openFinishedModal(item, stateEntry) {
+  const titleEl = document.getElementById("episode-modal-title");
+  const tagEl = document.getElementById("episode-modal-tag");
+  const airdateEl = document.getElementById("episode-modal-airdate");
+  const summaryEl = document.getElementById("episode-modal-summary");
+  const streamingEl = document.getElementById("episode-modal-streaming");
+
+  titleEl.textContent = item.display_title;
+  summaryEl.textContent = "";
+  summaryEl.classList.add("hidden");
+  streamingEl.textContent = "";
+  setModalPoster(item);
+
+  if (item.abandoned) {
+    // Statut purement local (choix de l'utilisateur) : pas de fetch réseau
+    // nécessaire, contrairement aux autres cartes "Terminé".
+    tagEl.textContent = "Abandonné";
+    const watched = (progress[item.id] && progress[item.id].episode) || 0;
+    airdateEl.textContent =
+      watched > 0 ? `Abandonnée à l'épisode ${watched}` : "Abandonnée avant le premier épisode";
+    showEpisodeModal();
+    return;
+  }
+
+  tagEl.textContent = "Terminé";
+  airdateEl.textContent = item.type === "tv" ? formatTvLatest(stateEntry) : formatAnimeLatest(stateEntry);
+  showEpisodeModal();
+
+  try {
+    const raw = await fetchRawEpisodeData(item);
+    airdateEl.textContent = computeFinishedStatusLabel(item, stateEntry, raw);
+    renderStreamingList(streamingEl, getSeriesStreamingList(item.type, raw));
+    fillTranslatedSummary(summaryEl, item.type === "tv" ? raw.summary : raw.description);
+  } catch (e) {
+    airdateEl.textContent = `Infos indisponibles (${e.message})`;
+  }
 }
 
 async function renderList(containerId, items, builder) {
@@ -877,55 +1579,232 @@ async function renderList(containerId, items, builder) {
   }
 }
 
+/** Sépare les items "Terminé" en trois sous-groupes (voir buildFinishedCard
+ * / buildAbandonedCard) avant de construire les cartes. Contrairement aux
+ * autres listes, on ne peut pas répartir puis mettre à jour après coup :
+ * il faut la fiche complète (résumé/dates) de chaque item pour savoir
+ * dans quel sous-groupe le ranger — sauf pour les abandons, qui sont un
+ * choix de l'utilisateur (donc déjà connu sans appel réseau). */
+async function renderFinishedGroups(items) {
+  const finishedContainer = document.getElementById("list-termine-fini");
+  const upcomingContainer = document.getElementById("list-termine-attente");
+  const abandonedContainer = document.getElementById("list-termine-abandonne");
+  finishedContainer.innerHTML = "";
+  upcomingContainer.innerHTML = "";
+  abandonedContainer.innerHTML = "";
+
+  const abandonedItems = items.filter((item) => item.abandoned);
+  const otherItems = items.filter((item) => !item.abandoned);
+
+  const classified = await Promise.all(
+    otherItems.map(async (item) => {
+      let raw = null;
+      try {
+        raw = await fetchRawEpisodeData(item);
+      } catch {
+        raw = null;
+      }
+      // Fiche indisponible : on ne peut pas affirmer que la suite arrive,
+      // donc on range par défaut côté "Terminées" plutôt que d'inventer.
+      const reallyFinished = raw ? formatSeriesEndDate(item.type, raw) !== null : true;
+      return { item, raw, reallyFinished };
+    })
+  );
+
+  for (const { item, raw, reallyFinished } of classified) {
+    const container = reallyFinished ? finishedContainer : upcomingContainer;
+    container.appendChild(await buildFinishedCard(item, raw, reallyFinished));
+  }
+
+  for (const item of abandonedItems) {
+    abandonedContainer.appendChild(await buildAbandonedCard(item));
+  }
+
+  const upcomingCount = classified.filter((c) => !c.reallyFinished).length;
+  const finishedCount = classified.length - upcomingCount;
+  setSectionCount("count-termine-attente", upcomingCount);
+  setSectionCount("count-termine-fini", finishedCount);
+  setSectionCount("count-termine-abandonne", abandonedItems.length);
+}
+
+/** Affiche "(N)" à côté du titre d'une section/sous-section, pour un
+ * repère rapide du nombre de cartes qu'elle contient. */
+function setSectionCount(elId, count) {
+  const el = document.getElementById(elId);
+  if (el) el.textContent = `(${count})`;
+}
+
+/** Fait remonter automatiquement en "En cours" les titres "Terminé" / "À
+ * jour" pour lesquels un nouvel épisode non vu est maintenant diffusé :
+ * être "à jour" veut dire "rien de nouveau à voir", donc un nouvel
+ * épisode diffusé change cette réalité, pas besoin d'attendre un clic.
+ * Ne touche ni aux titres abandonnés (choix explicite qu'on ne défait pas
+ * tout seul) ni aux titres réellement finis. Conserve la progression :
+ * l'item réapparaît dans "En cours" pile là où il en était. */
+async function autoPromoteUpToDateItems(items) {
+  const promoted = [];
+  for (const item of items) {
+    if (item.abandoned) continue;
+    let raw;
+    try {
+      raw = await fetchRawEpisodeData(item);
+    } catch {
+      continue;
+    }
+    if (formatSeriesEndDate(item.type, raw) !== null) continue; // réellement fini : rien à promouvoir
+
+    const progressEpisode = (progress[item.id] && progress[item.id].episode) || 0;
+    const info =
+      item.type === "tv"
+        ? deriveTvEpisodeInfo(raw, progressEpisode, new Date().toISOString().slice(0, 10))
+        : deriveAnimeEpisodeInfo(raw, progressEpisode, Date.now() / 1000);
+
+    if (info.kind === "episode" && info.hasAired) {
+      item.status = "en_cours";
+      promoted.push(item);
+    }
+  }
+
+  if (promoted.length) {
+    await store.putFile(
+      "watchlist.json",
+      watchlist,
+      `Statut : ${promoted.map((i) => i.id).join(", ")} -> en_cours (nouvel épisode disponible)`
+    );
+    if (promoted.length === 1) {
+      showToast(`"${promoted[0].display_title}" : nouvel épisode disponible, de retour en "En cours" !`);
+    } else {
+      showToast(`${promoted.length} séries ont un nouvel épisode disponible et repassent en "En cours" !`);
+    }
+  }
+}
+
+/** Fait redescendre en "Terminé" / "À jour" les titres "En cours" dont le
+ * prochain épisode connu n'est pas encore diffusé : "En cours" doit vouloir
+ * dire "il y a quelque chose à regarder maintenant", pas "on attend une
+ * date de diffusion connue" — ce qui est exactement la définition de "À
+ * jour" (complément d'autoPromoteUpToDateItems, dans l'autre sens). Ne
+ * s'applique qu'aux items dont le prochain épisode est identifié ; le cas
+ * "plus aucun épisode connu du tout" est déjà géré par markFinished au
+ * moment du clic "✓ Vu"/ajustement (voir applyEpisodeProgress). */
+async function autoDemoteWaitingItems(items) {
+  for (const item of items) {
+    let info;
+    try {
+      info = await getNextEpisodeInfo(item);
+    } catch {
+      continue;
+    }
+    if (info.kind === "episode" && !info.unknown && !info.hasAired) {
+      await markFinished(item.id);
+    }
+  }
+}
+
 async function renderAll() {
+  const initialGroups = groupByStatus(watchlist.items);
+  await autoDemoteWaitingItems(initialGroups.en_cours);
+  await autoPromoteUpToDateItems(initialGroups.termine);
+
+  // Regroupe à nouveau après d'éventuelles promotions/rétrogradations, pour
+  // que les items concernés apparaissent dans la bonne section dès ce rendu.
   const groups = groupByStatus(watchlist.items);
   await renderList("list-en-cours", groups.en_cours, buildEpisodeCard);
+  setSectionCount("count-en-cours", groups.en_cours.length);
   await renderList("list-a-regarder", groups.a_regarder, buildShowCard);
-  await renderList("list-termine", groups.termine, buildShowCard);
+  setSectionCount("count-a-regarder", groups.a_regarder.length);
+  await renderFinishedGroups(groups.termine);
+  setSectionCount("count-termine", groups.termine.length);
 }
 
 /* ------------------------------ Actions ------------------------------ */
 
-async function updateProgress(itemId, newEpisode) {
-  progress[itemId] = { ...(progress[itemId] || {}), episode: newEpisode };
-  await store.putFile("progress.json", progress, `Progression : ${itemId} -> épisode ${newEpisode}`);
-}
-
+/** Démarre un titre "à regarder". Si une progression existe déjà (ex. un
+ * titre mis en pause depuis "En cours", voir pauseWatching), on repart de
+ * là plutôt que de réinitialiser à 0 — seul un tout premier démarrage
+ * initialise la progression. */
 async function startWatching(itemId) {
   const item = watchlist.items.find((i) => i.id === itemId);
   if (!item) return;
   item.status = "en_cours";
   await store.putFile("watchlist.json", watchlist, `Statut : ${itemId} -> en_cours`);
-  progress[itemId] = { episode: 0 };
-  await store.putFile("progress.json", progress, `Progression : ${itemId} initialisée`);
+  if (!progress[itemId]) {
+    progress[itemId] = { episode: 0 };
+    await store.putFile("progress.json", progress, `Progression : ${itemId} initialisée`);
+  }
+}
+
+/** Met en pause un titre "en cours" : repasse en "à regarder" en
+ * conservant la progression (contrairement à un abandon ou une
+ * suppression, l'idée est de reprendre plus tard là où on s'était
+ * arrêté). */
+async function pauseWatching(itemId) {
+  const item = watchlist.items.find((i) => i.id === itemId);
+  if (!item) return;
+  item.status = "a_regarder";
+  await store.putFile("watchlist.json", watchlist, `Statut : ${itemId} -> a_regarder (pause)`);
+}
+
+/** Abandonne un titre "en cours" : passe en "Terminé" / "Abandonné", en
+ * conservant la progression (dernier épisode enregistré) pour la carte
+ * abandonnée et pour une reprise ultérieure. */
+async function abandonWatching(itemId) {
+  const item = watchlist.items.find((i) => i.id === itemId);
+  if (!item) return;
+  item.status = "termine";
+  item.abandoned = true;
+  await store.putFile("watchlist.json", watchlist, `Statut : ${itemId} -> abandonné`);
+}
+
+/** Reprend un titre abandonné là où il avait été laissé (contrairement à
+ * "Regarder à nouveau" qui repart de l'épisode 1 pour un rewatch complet,
+ * on conserve ici la progression existante). */
+async function resumeAbandoned(itemId) {
+  const item = watchlist.items.find((i) => i.id === itemId);
+  if (!item) return;
+  item.status = "en_cours";
+  delete item.abandoned;
+  await store.putFile("watchlist.json", watchlist, `Statut : ${itemId} -> en_cours (reprise après abandon)`);
 }
 
 /** Bascule un titre "en cours" vers "terminé" (ne touche pas à sa
- * progression, qui reste consultable si jamais on reprend plus tard). */
+ * progression, qui reste consultable si jamais on reprend plus tard).
+ * Chaque appel ajoute la date du jour à `finished_history`, qui sert à la
+ * fois de date affichée (voir computeFinishedStatusLabel) et de compteur
+ * de rewatchs une fois que la série est regardée à nouveau (voir
+ * buildEpisodeCard). */
 async function markFinished(itemId) {
   const item = watchlist.items.find((i) => i.id === itemId);
   if (!item) return;
   item.status = "termine";
+  item.finished_history = [...getFinishedHistory(item), todayIso()];
+  delete item.finished_at; // migration vers finished_history (tableau)
   await store.putFile("watchlist.json", watchlist, `Statut : ${itemId} -> terminé`);
 }
 
-/** Fait l'inverse : un titre "terminé" redevient "en cours" (ex. on
- * recommence la série, ou une nouvelle saison sort). */
-async function resumeWatching(itemId) {
+/** Repasse un titre "Terminé" en "En cours" pour le regarder à nouveau
+ * depuis l'épisode 1 (que la série soit toujours en diffusion ou
+ * vraiment finie, "Regarder à nouveau" veut dans les deux cas dire
+ * repartir de zéro) — `finished_history` est conservé, il sert de
+ * compteur de rewatchs affiché sur la carte "En cours" résultante. */
+async function watchAgain(itemId) {
   const item = watchlist.items.find((i) => i.id === itemId);
   if (!item) return;
   item.status = "en_cours";
-  await store.putFile("watchlist.json", watchlist, `Statut : ${itemId} -> en_cours (repris)`);
+  await store.putFile("watchlist.json", watchlist, `Statut : ${itemId} -> en_cours (revisionnage)`);
+  progress[itemId] = { episode: 0 };
+  await store.putFile("progress.json", progress, `Progression : ${itemId} réinitialisée (revisionnage)`);
 }
 
-/** Marque l'épisode actuellement affiché comme vu (bouton "✓ Vu" de la
- * carte épisode) : incrémente la progression, puis regarde ce que ça donne
- * pour la suite (encore un épisode connu ? à jour mais série vivante ?
- * série terminée ?) pour décider du message de succès et d'un éventuel
- * changement de statut. */
-async function markEpisodeWatched(item) {
-  const raw = await fetchRawEpisodeData(item); // pas de refetch réseau : la donnée brute ne dépend pas de la progression
-  const newEpisode = ((progress[item.id] && progress[item.id].episode) || 0) + 1;
+/** Enregistre une nouvelle progression pour un item et regarde ce que ça
+ * donne pour la suite (encore un épisode connu ? à jour mais série
+ * vivante ? plus rien à venir ?) pour décider d'un message de succès et
+ * d'un éventuel changement de statut automatique vers "Terminé".
+ * Centralisé ici pour s'appliquer aussi bien au bouton "✓ Vu" qu'à un
+ * ajustement manuel du numéro d'épisode (ex. "180" pour une série qui en
+ * compte exactement 180 : la carte doit basculer en "Terminé" tout
+ * autant que si on avait cliqué "✓ Vu" jusqu'au bout). */
+async function applyEpisodeProgress(item, newEpisode, raw) {
   progress[item.id] = { episode: newEpisode };
   await store.putFile("progress.json", progress, `Progression : ${item.id} -> épisode ${newEpisode}`);
 
@@ -936,11 +1815,23 @@ async function markEpisodeWatched(item) {
 
   if (info.kind === "finished") {
     await markFinished(item.id);
-    showToast(`"${item.display_title}" terminé !`);
+    showFinishedStatusToast(item, raw);
   } else if (!info.hasAired) {
-    showToast(`À jour sur "${item.display_title}" !`);
+    // Le passage effectif en "Terminé" / "À jour" est fait par
+    // autoDemoteWaitingItems, appelé par le renderAll() qui suit toujours
+    // cet appel (voir markEpisodeWatched / le bouton "✎ Ajuster") : pas de
+    // markFinished ici pour éviter un double enregistrement dans
+    // finished_history.
+    showToast(`Vous êtes à jour sur "${item.display_title}", la suite arrive !`);
   }
+}
 
+/** Marque l'épisode actuellement affiché comme vu (bouton "✓ Vu" de la
+ * carte épisode). */
+async function markEpisodeWatched(item) {
+  const raw = await fetchRawEpisodeData(item); // pas de refetch réseau : la donnée brute ne dépend pas de la progression
+  const newEpisode = ((progress[item.id] && progress[item.id].episode) || 0) + 1;
+  await applyEpisodeProgress(item, newEpisode, raw);
   await renderAll();
 }
 
@@ -958,9 +1849,44 @@ async function addNewItem({ title, type, searchTitle, anilistId, status }) {
     status,
   };
   if (anilistId) newItem.anilist_id = anilistId;
+  if (status === "termine") newItem.finished_history = [todayIso()];
 
   watchlist.items.push(newItem);
   await store.putFile("watchlist.json", watchlist, `Ajout : ${title}`);
+
+  if (status === "en_cours") {
+    progress[id] = { episode: 0 };
+    await store.putFile("progress.json", progress, `Progression : ${id} initialisée`);
+  }
+
+  return id;
+}
+
+/** Ajoute un titre anime regroupant plusieurs saisons AniList (chacune
+ * modélisée comme une fiche distincte côté API, ex. "La Voie du tablier")
+ * en une seule carte de suivi, avec une numérotation d'épisode continue à
+ * travers les saisons (voir fetchAnimeRawGrouped). `seasons` doit déjà
+ * être trié dans l'ordre chronologique de diffusion.
+ * NB : le bot de notif externe (hors de ce repo) attend un `anilist_id`
+ * unique par titre pour repérer les nouveaux épisodes ; un item groupé
+ * n'a pas ce champ et ne sera donc pas notifié tant que le bot n'aura pas
+ * été adapté séparément — limitation acceptée pour l'instant. */
+async function addGroupedAnimeItem({ title, seasons, status }) {
+  const existingIds = new Set(watchlist.items.map((i) => i.id));
+  const id = uniqueId(slugify(title), existingIds);
+
+  const newItem = {
+    id,
+    display_title: title,
+    search_title: seasons[0].search_title,
+    type: "anime",
+    status,
+    anilist_seasons: seasons.map((s) => ({ anilist_id: s.anilist_id, search_title: s.search_title })),
+  };
+  if (status === "termine") newItem.finished_history = [todayIso()];
+
+  watchlist.items.push(newItem);
+  await store.putFile("watchlist.json", watchlist, `Ajout (groupé, ${seasons.length} saisons) : ${title}`);
 
   if (status === "en_cours") {
     progress[id] = { episode: 0 };
@@ -1073,6 +1999,103 @@ function initEpisodeModal() {
   modal.addEventListener("click", (e) => {
     if (e.target === modal) modal.classList.add("hidden");
   });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !modal.classList.contains("hidden")) {
+      modal.classList.add("hidden");
+    }
+  });
+}
+
+/* ------------------------------ Modale de choix (poubelle "En cours") ------------------------------ */
+
+// Id de l'item concerné par la modale de choix actuellement ouverte (voir
+// openDeleteChoiceModal / initDeleteChoiceModal juste en dessous).
+let deleteChoiceItemId = null;
+
+/** Ouvre la modale de choix (Annuler / Pause / Abandonner / Supprimer),
+ * déclenchée par le picto poubelle sur une carte "En cours" — voir
+ * buildEpisodeCard. Les cartes "À regarder" et "Terminé" gardent le
+ * simple confirm() de suppression, pause/abandon n'ayant de sens que pour
+ * un titre qu'on est en train de regarder. */
+function openDeleteChoiceModal(item) {
+  deleteChoiceItemId = item.id;
+  document.getElementById("delete-choice-title").textContent = `"${item.display_title}"`;
+  document.getElementById("delete-choice-modal").classList.remove("hidden");
+}
+
+function initDeleteChoiceModal() {
+  const modal = document.getElementById("delete-choice-modal");
+  const closeBtn = document.getElementById("btn-delete-choice-close");
+  const cancelBtn = document.getElementById("btn-choice-cancel");
+  const pauseBtn = document.getElementById("btn-choice-pause");
+  const abandonBtn = document.getElementById("btn-choice-abandon");
+  const deleteBtn = document.getElementById("btn-choice-delete");
+
+  function close() {
+    modal.classList.add("hidden");
+    deleteChoiceItemId = null;
+  }
+
+  closeBtn.addEventListener("click", close);
+  cancelBtn.addEventListener("click", close);
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) close();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !modal.classList.contains("hidden")) close();
+  });
+
+  pauseBtn.addEventListener("click", async () => {
+    const itemId = deleteChoiceItemId;
+    if (!itemId) return;
+    const item = watchlist.items.find((i) => i.id === itemId);
+    pauseBtn.disabled = true;
+    try {
+      await pauseWatching(itemId);
+      close();
+      showToast(`"${item.display_title}" mis en pause.`);
+      await renderAll();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      pauseBtn.disabled = false;
+    }
+  });
+
+  abandonBtn.addEventListener("click", async () => {
+    const itemId = deleteChoiceItemId;
+    if (!itemId) return;
+    const item = watchlist.items.find((i) => i.id === itemId);
+    abandonBtn.disabled = true;
+    try {
+      await abandonWatching(itemId);
+      close();
+      showToast(`"${item.display_title}" marqué comme abandonné.`);
+      await renderAll();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      abandonBtn.disabled = false;
+    }
+  });
+
+  deleteBtn.addEventListener("click", async () => {
+    const itemId = deleteChoiceItemId;
+    if (!itemId) return;
+    const item = watchlist.items.find((i) => i.id === itemId);
+    const ok = confirm(`Supprimer définitivement "${item.display_title}" de la watchlist ? Cette action est irréversible.`);
+    if (!ok) return;
+    deleteBtn.disabled = true;
+    try {
+      await removeItem(itemId);
+      close();
+      await renderAll();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      deleteBtn.disabled = false;
+    }
+  });
 }
 
 /* ------------------------------ Panneau d'ajout ------------------------------ */
@@ -1088,15 +2111,34 @@ function initAddPanel() {
   const statusEl = document.getElementById("add-search-status");
   const resultsEl = document.getElementById("add-results");
   const errorEl = document.getElementById("add-error");
+  const groupBar = document.getElementById("add-group-bar");
+  const groupCountEl = document.getElementById("add-group-count");
+  const groupBtn = document.getElementById("btn-add-group");
 
   let currentType = "tv";
   let currentStatus = "a_regarder";
+  // Sélection courante pour le regroupement de saisons (anime uniquement),
+  // remise à zéro à chaque nouvelle recherche/fermeture du panneau.
+  // Clé : anilist_id -> { result, checkbox }.
+  let selectedForGroup = new Map();
+
+  function updateGroupBar() {
+    const count = selectedForGroup.size;
+    if (count < 2) {
+      groupBar.classList.add("hidden");
+      return;
+    }
+    groupBar.classList.remove("hidden");
+    groupCountEl.textContent = `${count} saisons sélectionnées`;
+  }
 
   function resetPanel() {
     searchInput.value = "";
     statusEl.textContent = "";
     resultsEl.innerHTML = "";
     errorEl.classList.add("hidden");
+    selectedForGroup = new Map();
+    updateGroupBar();
   }
 
   function closePanel() {
@@ -1112,6 +2154,22 @@ function initAddPanel() {
   // Clic sur le fond sombre (en dehors du panneau lui-même) = fermeture.
   overlay.addEventListener("click", (e) => {
     if (e.target === overlay) closePanel();
+  });
+
+  // Touche Échap = fermeture, comme le clic sur le fond sombre.
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !overlay.classList.contains("hidden")) {
+      closePanel();
+    }
+  });
+
+  // Touche Entrée dans le champ de recherche = déclenche la recherche,
+  // comme un clic sur "Chercher".
+  searchInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      searchBtn.click();
+    }
   });
 
   typeButtons.forEach((btn) => {
@@ -1136,6 +2194,8 @@ function initAddPanel() {
     statusEl.textContent = "Recherche…";
     resultsEl.innerHTML = "";
     errorEl.classList.add("hidden");
+    selectedForGroup = new Map();
+    updateGroupBar();
 
     try {
       const results = currentType === "tv" ? await searchTvmazeMulti(query) : await searchAnilistMulti(query);
@@ -1145,6 +2205,26 @@ function initAddPanel() {
         const item = el("div", "result-item");
         const already = isAlreadyAdded(r, watchlist.items);
         if (already) item.classList.add("already-added");
+
+        // Case à cocher pour regrouper plusieurs saisons d'un même anime en
+        // une seule carte de suivi (chaque saison est une fiche AniList
+        // distincte côté API) : voir la barre "Regrouper..." plus bas.
+        if (r.type === "anime" && !already && r.anilist_id) {
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.className = "result-select";
+          checkbox.title = "Sélectionner pour regrouper avec d'autres saisons";
+          checkbox.addEventListener("click", (e) => e.stopPropagation());
+          checkbox.addEventListener("change", () => {
+            if (checkbox.checked) {
+              selectedForGroup.set(r.anilist_id, r);
+            } else {
+              selectedForGroup.delete(r.anilist_id);
+            }
+            updateGroupBar();
+          });
+          item.appendChild(checkbox);
+        }
 
         const img = document.createElement("img");
         img.src = r.image || "";
@@ -1199,6 +2279,40 @@ function initAddPanel() {
       statusEl.textContent = `Erreur de recherche : ${e.message}`;
     }
   });
+
+  groupBtn.addEventListener("click", async () => {
+    const seasons = Array.from(selectedForGroup.values()).sort(
+      (a, b) => (parseInt(a.year, 10) || 0) - (parseInt(b.year, 10) || 0)
+    );
+    if (seasons.length < 2) return;
+
+    const defaultTitle = seasons[0].title;
+    const title = prompt(
+      `Titre affiché pour ce regroupement de ${seasons.length} saisons :`,
+      defaultTitle
+    );
+    if (!title || !title.trim()) return;
+
+    groupBtn.disabled = true;
+    errorEl.classList.add("hidden");
+    try {
+      await addGroupedAnimeItem({
+        title: title.trim(),
+        seasons: seasons.map((s) => ({ anilist_id: s.anilist_id, search_title: s.search_title })),
+        status: currentStatus,
+      });
+      showToast(`"${title.trim()}" ajouté (${seasons.length} saisons regroupées) !`);
+      selectedForGroup = new Map();
+      updateGroupBar();
+      await renderAll();
+      searchBtn.click(); // rafraîchit les résultats affichés (coches "déjà ajouté")
+    } catch (e) {
+      errorEl.textContent = e.message;
+      errorEl.classList.remove("hidden");
+    } finally {
+      groupBtn.disabled = false;
+    }
+  });
 }
 
 /* Le bootstrap réel ne s'exécute que dans un navigateur (pas lors des
@@ -1208,6 +2322,7 @@ if (typeof document !== "undefined") {
     initSetupScreen();
     initAddPanel();
     initEpisodeModal();
+    initDeleteChoiceModal();
 
     document.getElementById("btn-refresh").addEventListener("click", boot);
     document.getElementById("btn-settings").addEventListener("click", () => {
@@ -1229,6 +2344,7 @@ if (typeof module !== "undefined") {
     computeDelta,
     formatTvLatest,
     formatAnimeLatest,
+    formatLastWatchedLabel,
     b64EncodeUnicode,
     b64DecodeUnicode,
     slugify,
@@ -1240,5 +2356,15 @@ if (typeof module !== "undefined") {
     formatEpisodeTag,
     formatAirdateDisplay,
     getStreamingIcon,
+    formatSeriesEndDate,
+    formatLastKnownEpisode,
+    findLastAiredFromRaw,
+    isoToDMY,
+    getFinishedHistory,
+    computeFinishedStatusLabel,
+    getSeriesStreamingList,
+    stripHtmlToParagraphs,
+    chunkText,
+    hashText,
   };
 }
