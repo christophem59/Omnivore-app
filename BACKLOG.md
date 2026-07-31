@@ -4,7 +4,7 @@ _Dernière mise à jour : 2026-07-30_
 
 ## En cours de traitement
 
-- Découpage de l'app en catégories (Séries / Animés / Films / Mangas-Scans), affichées en onglets au-dessus de la barre de recherche : phase de maquette design, la logique fonctionnelle derrière (filtrage réel des données par catégorie, etc.) sera abordée une fois la maquette validée.
+Rien actuellement — support des films en cours de test utilisateur réel, retours à venir.
 
 ## À faire
 
@@ -15,14 +15,13 @@ _Dernière mise à jour : 2026-07-30_
 ### 2. Extension du périmètre
 
 - Suivi des mangas via MangaDex, progression par chapitre.
-- Support des films (vu/pas vu, note).
-- Regroupement des films façon "Collection" (même principe que le regroupement de saisons anime) — nécessite d'abord la logique de suivi des films ci-dessus.
 - Lecture vidéo intégrée : embarquer les flux de streaming pour visionner directement depuis l'app plutôt que de rediriger vers le service externe. À creuser (faisabilité technique/légale selon les plateformes).
+- Films : services de streaming disponibles (nécessite un appel TMDb par film + gestion de région, volontairement hors scope au premier passage).
 
 ### 3. Design
 
+- **Retravailler l'interface pour le mobile, en priorité** : c'est là que l'app est principalement utilisée. Repéré concrètement pendant les tests : la colonne d'actions des cartes (boutons) et les badges ("X épisodes restants"...) se réorganisent mal sous ~400px de large.
 - Refonte graphique de l'app à partir du design en cours de création suite à l'obtention du logo.
-- Affichage optimisé pour mobile.
 - Barre de progression (section "En cours") : utiliser toute la largeur disponible plutôt qu'une largeur fixe.
 
 ## Hors scope pour l'instant
@@ -65,3 +64,6 @@ _Dernière mise à jour : 2026-07-30_
 - Bouton "Ignoré" à côté de "✓ Vu" (cartes "En cours") : passe à l'épisode suivant sans le compter comme vu (épisodes spéciaux), sans apparaître ✓ dans le détail saison/épisode.
 - Ratings affichés à côté du streaming, dans la modale de détail (TVMaze /10, AniList /100) et dans les résultats de recherche du panneau d'ajout.
 - Veille Sickrage/Sonarr/Radarr : a donné le statut "Ignoré", l'idée des ratings, et l'idée de regroupement "Collection" pour les films.
+- Découpage de l'app en catégories (Séries/Animés/Films/Mangas-Scans), affichées en onglets au-dessus de la barre de recherche : Séries/Animés/Films filtrent la vraie watchlist (mêmes sections/cartes/comportements qu'avant, juste scopés par type), Mangas-Scans reste "Bientôt" en attendant ce suivi.
+- Support des films (vu/pas vu, note TMDb) + regroupement "Collection" pour les sagas, à la main façon regroupement de saisons anime (recherche + case à cocher + "Regrouper en une série", "+ Ajouter un film"/"🗑 Retirer le dernier film" ensuite dans la modale). Pas de section "En cours" pour les films : une carte reste "À regarder" (même après plusieurs volets vus) jusqu'à bascule directe en "Terminé" ; passe aussi en "À jour (suite à venir)" dès que le prochain volet est annoncé mais pas encore sorti (ex. Dune Part Three), même si on n'a pas tout regardé d'un coup. Correction au passage : le cache d'affiche ne retient plus un échec (auto-guérison), avec nettoyage rétroactif des entrées déjà figées.
+- Réordonnancement manuel des volets/saisons d'une collection (films ET animes) : boutons ▲/▼ dans la modale de détail, sur la partie pas encore vue uniquement (jamais sur ce qui est déjà marqué vu, pour ne pas fausser la progression enregistrée) — utile quand l'ordre de sortie ne correspond pas à l'ordre de visionnage voulu (préquelles, etc.).

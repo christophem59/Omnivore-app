@@ -12,6 +12,7 @@ const LS = {
   repo: "sv_repo",
   branch: "sv_branch",
   token: "sv_token",
+  tmdbKey: "sv_tmdb_key",
   posterCache: "sv_poster_cache",
   episodeCache: "sv_episode_cache",
   summaryCache: "sv_summary_cache",
@@ -65,6 +66,16 @@ function formatAnimeLatest(stateEntry) {
   return `Dernier diffusé : épisode ${stateEntry.number}`;
 }
 
+/** Équivalent film de formatTvLatest/formatAnimeLatest. Le bot de notif
+ * externe qui alimente state.json ne connaît pas les films : ce cas
+ * renverra donc presque toujours "Pas encore de donnée", et
+ * formatLastKnownEpisode retombera sur findLastAiredFromRaw (calculé
+ * directement depuis raw.episodes) — gardé pour la cohérence de l'API. */
+function formatFilmLatest(stateEntry) {
+  if (!stateEntry || typeof stateEntry.number !== "number") return "Pas encore de donnée";
+  return `Dernier film vu : volet ${stateEntry.number}`;
+}
+
 /** Libellé "Dernier épisode regardé" pour une carte "À regarder" dont la
  * progression n'est pas nulle (ex. titre mis en pause depuis "En cours").
  * Générique ici (numéro brut) ; buildShowCard le complète en "SxxExx" une
@@ -110,6 +121,12 @@ function isAlreadyAdded(result, items) {
     }
     if (result.anilist_id && Array.isArray(item.anilist_seasons)) {
       return item.anilist_seasons.some((s) => s.anilist_id === result.anilist_id);
+    }
+    if (result.tmdb_id && item.tmdb_id) {
+      return item.tmdb_id === result.tmdb_id;
+    }
+    if (result.tmdb_id && Array.isArray(item.tmdb_seasons)) {
+      return item.tmdb_seasons.some((s) => s.tmdb_id === result.tmdb_id);
     }
     return (
       item.type === result.type &&
@@ -255,6 +272,11 @@ function deriveAnimeEpisodeInfo(raw, progressEpisode, nowSec) {
  * pour les spéciaux / cas inconnus. */
 function formatEpisodeTag(itemType, info) {
   if (info.unknown) return "Prochain épisode";
+  if (itemType === "film") {
+    // Un film ne se pense pas en numéro : le titre du volet lui-même est le
+    // repère le plus utile (ex. "Dune : Deuxième Partie").
+    return info.name || `Film ${info.number}`;
+  }
   if (itemType === "tv") {
     if (info.number === null || info.number === undefined) {
       return info.season ? `Saison ${info.season} (spécial)` : "Épisode spécial";
@@ -267,10 +289,15 @@ function formatEpisodeTag(itemType, info) {
 /** Ligne d'affichage de la date de diffusion, avec gestion des cas où la
  * date exacte n'est pas connue. `airdate` est soit une chaîne "YYYY-MM-DD"
  * (TVmaze), soit un timestamp epoch en secondes (AniList), soit null. */
-function formatAirdateDisplay(info) {
+function formatAirdateDisplay(info, itemType) {
+  const [pastWord, futureWord, unknownPast, unknownFuture] =
+    itemType === "film"
+      ? ["Sorti", "Sortie prévue", "Sorti (date exacte inconnue)", "Sortie prévue (date inconnue)"]
+      : ["Diffusé", "À venir", "Diffusé (date exacte inconnue)", "À venir (date inconnue)"];
+
   if (info.unknown) return "Date inconnue pour l'instant";
   if (info.airdate === null || info.airdate === undefined) {
-    return info.hasAired ? "Diffusé (date exacte inconnue)" : "À venir (date inconnue)";
+    return info.hasAired ? unknownPast : unknownFuture;
   }
   let d;
   if (typeof info.airdate === "number") {
@@ -279,7 +306,7 @@ function formatAirdateDisplay(info) {
     d = new Date(`${info.airdate}T00:00:00`);
   }
   const formatted = formatDMY(d.getFullYear(), d.getMonth() + 1, d.getDate());
-  return info.hasAired ? `Diffusé le ${formatted}` : `À venir le ${formatted}`;
+  return info.hasAired ? `${pastWord} le ${formatted}` : `${futureWord} le ${formatted}`;
 }
 
 /** Correspondance nom de service -> icône (Simple Icons, CDN gratuit et
@@ -357,6 +384,22 @@ function formatSeriesEndDate(itemType, raw) {
     const [y, m, d] = raw.ended.split("-").map(Number);
     return `Diffusée jusqu'au ${formatDMY(y, m, d)}`;
   }
+  if (itemType === "film") {
+    // Pas d'équivalent au `show.ended` de TVMaze côté TMDb (pas de notion de
+    // "franchise fermée") : on se base sur les volets eux-mêmes. Si la
+    // collection en liste au moins un au-delà de ceux déjà sortis (annoncé,
+    // avec ou sans date encore fixée — ex. Dune Part Three), la franchise
+    // est considérée toujours active ("à jour"). Sinon, on la traite par
+    // défaut comme réellement finie — limite honnête de ce que TMDb permet
+    // de savoir (une franchise peut toujours repartir sans préavis).
+    const episodes = raw.episodes || [];
+    if (!episodes.length) return null;
+    const today = new Date().toISOString().slice(0, 10);
+    const releasedCount = episodes.filter((e) => e.airdate && e.airdate <= today).length;
+    if (episodes.length > releasedCount) return null;
+    const last = episodes[releasedCount - 1] || episodes[episodes.length - 1];
+    return last && last.airdate ? `Sortie jusqu'au ${isoToDMY(last.airdate)}` : "Sortie terminée";
+  }
   const end = raw.endDate;
   if (!end || !end.year) return null;
   if (end.month && end.day) {
@@ -369,12 +412,13 @@ function formatSeriesEndDate(itemType, raw) {
  * mêmes (indépendamment de state.json), pour les séries jamais suivies
  * "en cours" par le bot de notif (state.json n'a alors aucune entrée). */
 function findLastAiredFromRaw(itemType, raw) {
-  if (itemType === "tv") {
+  if (itemType !== "anime") {
+    // tv et film partagent la même forme raw.episodes.
     const today = new Date().toISOString().slice(0, 10);
     const aired = (raw.episodes || []).filter((e) => e.airdate && e.airdate <= today);
     if (!aired.length) return null;
     const last = aired[aired.length - 1];
-    return { season: last.season, number: last.number, airdateIso: last.airdate };
+    return { season: last.season, number: last.number, airdateIso: last.airdate, name: last.name };
   }
   const nowSec = Date.now() / 1000;
   const aired = (raw.airingSchedule || []).filter((n) => n.airingAt <= nowSec);
@@ -390,10 +434,11 @@ function findLastAiredFromRaw(itemType, raw) {
  * diffusé calculé à partir des données brutes elles-mêmes, plutôt que de
  * rester bloqué sur "Pas encore de donnée" alors qu'on a l'info. */
 function formatLastKnownEpisode(itemType, stateEntry, raw) {
-  const base = itemType === "tv" ? formatTvLatest(stateEntry) : formatAnimeLatest(stateEntry);
+  const base =
+    itemType === "tv" ? formatTvLatest(stateEntry) : itemType === "film" ? formatFilmLatest(stateEntry) : formatAnimeLatest(stateEntry);
 
   if (base !== "Pas encore de donnée" && raw) {
-    if (itemType === "tv") {
+    if (itemType !== "anime") {
       const ep = (raw.episodes || []).find(
         (e) => e.season === stateEntry.season && e.number === stateEntry.number
       );
@@ -414,6 +459,13 @@ function formatLastKnownEpisode(itemType, stateEntry, raw) {
   if (!raw) return base;
   const found = findLastAiredFromRaw(itemType, raw);
   if (!found) return base;
+
+  if (itemType === "film") {
+    const label = `Dernier film vu : ${found.name || "volet " + found.number}`;
+    if (!found.airdateIso) return label;
+    const [y, m, d] = found.airdateIso.split("-").map(Number);
+    return `${label} - le ${formatDMY(y, m, d)}`;
+  }
 
   if (itemType === "tv") {
     const label = `Dernier diffusé : S${pad2(found.season)}E${pad2(found.number)}`;
@@ -452,18 +504,21 @@ function computeFinishedStatusLabel(item, stateEntry, raw) {
  * malgré une série toujours active). */
 function formatNextEpisodeDate(item, raw) {
   const progressEpisode = (progress[item.id] && progress[item.id].episode) || 0;
+  // tv et film partagent deriveTvEpisodeInfo + un airdate en chaîne
+  // "YYYY-MM-DD" (contrairement à l'anime, en secondes epoch) — voir le plan.
   const info =
-    item.type === "tv"
+    item.type !== "anime"
       ? deriveTvEpisodeInfo(raw, progressEpisode, new Date().toISOString().slice(0, 10))
       : deriveAnimeEpisodeInfo(raw, progressEpisode, Date.now() / 1000);
+  const label = item.type === "film" ? "Prochain film" : "Prochain épisode";
 
   if (info.kind === "episode" && info.airdate) {
-    if (item.type === "tv") {
+    if (item.type !== "anime") {
       const [y, m, d] = info.airdate.split("-").map(Number);
-      return `Prochain épisode le ${formatDMY(y, m, d)}`;
+      return `${label} le ${formatDMY(y, m, d)}`;
     }
     const d = new Date(info.airdate * 1000);
-    return `Prochain épisode le ${formatDMY(d.getFullYear(), d.getMonth() + 1, d.getDate())}`;
+    return `${label} le ${formatDMY(d.getFullYear(), d.getMonth() + 1, d.getDate())}`;
   }
   return "Pas de date annoncée";
 }
@@ -631,7 +686,22 @@ class GitHubStore {
 
 function loadPosterCache() {
   try {
-    return JSON.parse(localStorage.getItem(LS.posterCache) || "{}");
+    const cache = JSON.parse(localStorage.getItem(LS.posterCache) || "{}");
+    // Nettoyage rétroactif : avant la correction de getPoster, un échec
+    // pouvait être mis en cache avec `url: null` pour 7 jours (POSTER_TTL_MS)
+    // — sans purge, ces entrées figées d'avant-correctif resteraient sans
+    // affiche jusqu'à leur expiration naturelle. Le nouveau code n'écrit
+    // plus jamais d'entrée sans url, donc ce filtre ne fait rien sur des
+    // entrées créées après le correctif.
+    let changed = false;
+    for (const key of Object.keys(cache)) {
+      if (!cache[key] || !cache[key].url) {
+        delete cache[key];
+        changed = true;
+      }
+    }
+    if (changed) savePosterCache(cache);
+    return cache;
   } catch {
     return {};
   }
@@ -672,13 +742,32 @@ async function getPoster(item) {
         const payload = await resp.json();
         url = payload?.data?.Media?.coverImage?.medium || null;
       }
+    } else if (item.type === "film") {
+      const apiKey = getTmdbKey();
+      if (apiKey) {
+        const tmdbId =
+          Array.isArray(item.tmdb_seasons) && item.tmdb_seasons.length ? item.tmdb_seasons[0].tmdb_id : item.tmdb_id;
+        const resp = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?api_key=${apiKey}`);
+        if (resp.ok) {
+          const data = await resp.json();
+          url = data.poster_path ? `https://image.tmdb.org/t/p/w300${data.poster_path}` : null;
+        } else {
+          console.warn("TMDb poster : réponse non OK pour", item.id, resp.status);
+        }
+      }
     }
   } catch (e) {
     console.warn("poster fetch failed for", item.id, e);
   }
 
-  cache[item.id] = { url, ts: Date.now() };
-  savePosterCache(cache);
+  // Ne met en cache qu'un succès : un échec (clé absente au moment du tout
+  // premier ajout, panne réseau ponctuelle...) ne doit pas rester bloqué à
+  // "pas d'affiche" pendant 7 jours (POSTER_TTL_MS) — on retente au rendu
+  // suivant plutôt que de figer un résultat négatif.
+  if (url) {
+    cache[item.id] = { url, ts: Date.now() };
+    savePosterCache(cache);
+  }
   return url;
 }
 
@@ -887,13 +976,80 @@ async function fetchAnimeRaw(item) {
   return raw;
 }
 
+/** Équivalent film de fetchTvRaw/fetchAnimeRaw : renvoie EXACTEMENT la même
+ * forme générique ({episodes, streaming, summary, rating}) pour que tout le
+ * moteur déjà écrit pour la TV (deriveTvEpisodeInfo, applyEpisodeProgress,
+ * groupByStatus, fillSeasonsSection...) fonctionne sans modification.
+ * Chaque "episode" est un film, `season` toujours 1. Deux cas, exactement
+ * comme pour l'anime : film seul (`item.tmdb_id`) ou regroupement manuel de
+ * plusieurs films (`item.tmdb_seasons`, même principe qu'`anilist_seasons` —
+ * recherche + case à cocher + "Regrouper en une série" à l'ajout, "+
+ * Ajouter un film"/"Retirer le dernier film" ensuite dans la modale de
+ * détail). L'ordre du tableau fait foi (pas de retri automatique derrière
+ * le dos de l'utilisateur) : un nouvel ajout arrive toujours en fin de
+ * liste, comme pour les saisons anime. */
+async function fetchFilmRaw(item) {
+  const apiKey = getTmdbKey();
+  if (!apiKey) {
+    throw new Error("Clé API TMDb manquante : ajoute-la dans Paramètres.");
+  }
+
+  if (Array.isArray(item.tmdb_seasons) && item.tmdb_seasons.length) {
+    const movies = await Promise.all(
+      item.tmdb_seasons.map((s) =>
+        fetch(`https://api.themoviedb.org/3/movie/${s.tmdb_id}?api_key=${apiKey}&language=fr-FR`).then((resp) => {
+          if (!resp.ok) throw new Error(`TMDb : détails indisponibles pour ${s.search_title || item.display_title}`);
+          return resp.json();
+        })
+      )
+    );
+    const episodes = movies.map((movie, idx) => ({
+      season: 1,
+      number: idx + 1,
+      airdate: movie.release_date || null,
+      name: movie.title,
+      summary: movie.overview || null,
+      rating: typeof movie.vote_average === "number" ? movie.vote_average : null,
+    }));
+    const last = episodes[episodes.length - 1];
+    return {
+      episodes,
+      streaming: null, // hors scope pour cette passe, voir le plan
+      summary: (movies[movies.length - 1] && movies[movies.length - 1].overview) || null,
+      rating: last ? last.rating : null,
+    };
+  }
+
+  const resp = await fetch(`https://api.themoviedb.org/3/movie/${item.tmdb_id}?api_key=${apiKey}&language=fr-FR`);
+  if (!resp.ok) throw new Error(`TMDb : détails indisponibles pour ${item.display_title}`);
+  const movie = await resp.json();
+  const episodes = [
+    {
+      season: 1,
+      number: 1,
+      airdate: movie.release_date || null,
+      name: movie.title,
+      summary: movie.overview || null,
+      rating: typeof movie.vote_average === "number" ? movie.vote_average : null,
+    },
+  ];
+
+  return {
+    episodes,
+    streaming: null,
+    summary: movie.overview || null,
+    rating: episodes[0].rating,
+  };
+}
+
 async function fetchRawEpisodeData(item, { forceRefresh } = {}) {
   const cache = loadEpisodeCache();
   const cached = cache[item.id];
   if (!forceRefresh && cached && Date.now() - cached.ts < EPISODE_TTL_MS) {
     return cached.data;
   }
-  const data = item.type === "tv" ? await fetchTvRaw(item) : await fetchAnimeRaw(item);
+  const data =
+    item.type === "tv" ? await fetchTvRaw(item) : item.type === "anime" ? await fetchAnimeRaw(item) : await fetchFilmRaw(item);
   const freshCache = loadEpisodeCache();
   freshCache[item.id] = { data, ts: Date.now() };
   saveEpisodeCache(freshCache);
@@ -906,7 +1062,8 @@ async function fetchRawEpisodeData(item, { forceRefresh } = {}) {
 async function getNextEpisodeInfo(item, opts = {}) {
   const raw = await fetchRawEpisodeData(item, opts);
   const progressEpisode = (progress[item.id] && progress[item.id].episode) || 0;
-  if (item.type === "tv") {
+  if (item.type !== "anime") {
+    // tv et film partagent deriveTvEpisodeInfo (même forme raw.episodes).
     const today = new Date().toISOString().slice(0, 10);
     return deriveTvEpisodeInfo(raw, progressEpisode, today);
   }
@@ -969,13 +1126,38 @@ async function searchAnilistMulti(query) {
   }));
 }
 
+/** Recherche TMDb multi-résultats (films). Renvoie la même forme générique
+ * déjà consommée telle quelle par le rendu des résultats du panneau
+ * d'ajout (title/year/image/status/rating) — voir searchTvmazeMulti /
+ * searchAnilistMulti. */
+async function searchTmdbMulti(query) {
+  const apiKey = getTmdbKey();
+  if (!apiKey) return [];
+  const resp = await fetch(
+    `https://api.themoviedb.org/3/search/movie?api_key=${apiKey}&language=fr-FR&query=${encodeURIComponent(query)}`
+  );
+  if (!resp.ok) return [];
+  const payload = await resp.json();
+  const today = new Date().toISOString().slice(0, 10);
+  return (payload.results || []).slice(0, 8).map((m) => ({
+    type: "film",
+    title: m.title,
+    search_title: m.title,
+    tmdb_id: m.id,
+    year: m.release_date ? m.release_date.slice(0, 4) : "",
+    status: !m.release_date || m.release_date > today ? "À venir" : null,
+    rating: typeof m.vote_average === "number" && m.vote_average > 0 ? m.vote_average : null,
+    image: m.poster_path ? `https://image.tmdb.org/t/p/w200${m.poster_path}` : null,
+  }));
+}
+
 /** Note à afficher sous un résultat de recherche (panneau d'ajout / mini-
  * recherche d'ajout de saison), même échelle par source que
  * formatRatingLabel mais sans le nom de la source (déjà évident ici, tout
  * est côté TVmaze ou AniList selon l'onglet Série/Anime choisi). */
 function formatSearchResultRating(r) {
   if (r.rating == null) return "";
-  return r.type === "tv" ? ` · Note : ${r.rating}/10` : ` · Note : ${r.rating}/100`;
+  return r.type === "anime" ? ` · Note : ${r.rating}/100` : ` · Note : ${r.rating}/10`;
 }
 
 /* ------------------------------ App state ------------------------------ */
@@ -998,7 +1180,7 @@ let activeCategory = "series";
 /** "series"/"animes" seulement : les deux seules catégories qui ont
  * réellement une logique de suivi aujourd'hui. */
 function isRealCategory(category) {
-  return category === "series" || category === "animes";
+  return category === "series" || category === "animes" || category === "films";
 }
 
 /** Sous-ensemble de la watchlist à afficher pour l'onglet actif. Ne filtre
@@ -1008,15 +1190,11 @@ function isRealCategory(category) {
 function itemsForActiveCategory() {
   if (activeCategory === "series") return watchlist.items.filter((i) => i.type === "tv");
   if (activeCategory === "animes") return watchlist.items.filter((i) => i.type === "anime");
+  if (activeCategory === "films") return watchlist.items.filter((i) => i.type === "film");
   return [];
 }
 
 const CATEGORY_PLACEHOLDER = {
-  films: {
-    icon: "🎬",
-    title: "Films arrive bientôt",
-    text: "Le suivi des films (vu / pas vu, note) est encore au backlog.",
-  },
   manga: {
     icon: "📖",
     title: "Mangas/Scans arrive bientôt",
@@ -1031,11 +1209,18 @@ function renderCategoryChrome() {
   const sectionsEl = document.getElementById("category-sections");
   const placeholderEl = document.getElementById("category-placeholder");
   const addBtn = document.getElementById("btn-add");
+  const groupEnCours = document.getElementById("group-en-cours");
   const isReal = isRealCategory(activeCategory);
 
   sectionsEl.classList.toggle("hidden", !isReal);
   placeholderEl.classList.toggle("hidden", isReal);
   addBtn.classList.toggle("hidden", !isReal);
+
+  // Pas de section "En cours" pour les films (voir le plan "Support des
+  // films") : un film est soit "à regarder", soit "terminé", jamais entre
+  // les deux — la carte reste dans "À regarder" tant que la collection
+  // n'est pas entièrement vue (voir buildShowCard).
+  groupEnCours.classList.toggle("hidden", activeCategory === "films");
 
   if (!isReal) {
     const meta = CATEGORY_PLACEHOLDER[activeCategory];
@@ -1136,6 +1321,19 @@ async function buildShowCard(item) {
       .catch(() => {
         // on garde le libellé générique déjà affiché
       });
+  } else if (watchedCount > 0 && item.type === "film") {
+    // Même principe que TV, mais un film se repère par son titre plutôt
+    // que par un numéro (voir formatEpisodeTag).
+    fetchRawEpisodeData(item)
+      .then((raw) => {
+        const ep = raw.episodes && raw.episodes[watchedCount - 1];
+        if (ep) {
+          subEl.textContent = `Dernier film vu : ${ep.name}`;
+        }
+      })
+      .catch(() => {
+        // on garde le libellé générique déjà affiché
+      });
   }
 
   card.appendChild(body);
@@ -1145,13 +1343,22 @@ async function buildShowCard(item) {
   // une carte vers "En cours" et méritent d'être visuellement cohérents.
   // Si une progression existait déjà (titre mis en pause), le bouton se
   // contente de reprendre là où on était, sans revalider l'épisode 1.
+  // Exception film : pas de section "En cours" pour ce type (voir le plan),
+  // donc pas de bascule de statut du tout ici — juste "Vu", qui marque le
+  // prochain volet et ne fait passer en "Terminé" que quand tout est vu.
+  const isFilm = item.type === "film";
   const actions = el("div", "card-actions");
-  const startBtn = el("button", "small-btn watch-again", watchedCount > 0 ? "Reprendre" : "Episode 1 vu");
+  const startLabel = isFilm ? "Vu" : watchedCount > 0 ? "Reprendre" : "Episode 1 vu";
+  const startBtn = el("button", "small-btn watch-again", startLabel);
   startBtn.addEventListener("click", async (e) => {
     e.stopPropagation();
     startBtn.textContent = "…";
     startBtn.disabled = true;
     try {
+      if (isFilm) {
+        await markEpisodeWatched(item);
+        return; // markEpisodeWatched a déjà déclenché son propre renderAll()
+      }
       await startWatching(item.id);
       if (watchedCount > 0) {
         showToast(`"${item.display_title}" : c'est parti !`);
@@ -1213,11 +1420,15 @@ async function buildFinishedCard(item, raw, reallyFinished) {
     ? computeFinishedStatusLabel(item, stateEntry, raw)
     : item.type === "tv"
     ? formatTvLatest(stateEntry)
+    : item.type === "film"
+    ? formatFilmLatest(stateEntry)
     : formatAnimeLatest(stateEntry);
   body.appendChild(el("p", "card-sub", label));
 
   if (reallyFinished) {
-    body.appendChild(el("span", "badge reallyfinished", "Série vraiment finie"));
+    body.appendChild(
+      el("span", "badge reallyfinished", item.type === "film" ? "Film(s) vraiment fini(s)" : "Série vraiment finie")
+    );
   } else {
     body.appendChild(el("span", "badge uptodate", "À jour · suite à venir"));
   }
@@ -1418,7 +1629,7 @@ async function buildEpisodeCard(item) {
   const tag = el("span", "badge episode-tag", formatEpisodeTag(item.type, info));
   clickableArea.appendChild(tag);
 
-  clickableArea.appendChild(el("p", "card-sub", formatAirdateDisplay(info)));
+  clickableArea.appendChild(el("p", "card-sub", formatAirdateDisplay(info, item.type)));
 
   if (info.extraBehind > 0) {
     const row = el("div", "episode-progress-row");
@@ -1595,7 +1806,9 @@ function showEpisodeModal() {
  * pas (fréquent pour les titres très récents ou confidentiels). */
 function formatRatingLabel(itemType, raw) {
   if (raw.rating == null) return null;
-  return itemType === "tv" ? `Note : ${raw.rating}/10 sur TVMaze` : `Note : ${raw.rating}/100 sur AniList`;
+  if (itemType === "tv") return `Note : ${raw.rating}/10 sur TVMaze`;
+  if (itemType === "film") return `Note : ${raw.rating}/10 sur TMDb`;
+  return `Note : ${raw.rating}/100 sur AniList`;
 }
 
 /** Affiche une liste de services de streaming (0, 1 ou plusieurs) dans la
@@ -1676,9 +1889,9 @@ function fillEpisodeModalContent(item, info, ratingLabel) {
 
   titleEl.textContent = item.display_title;
   tagEl.textContent = formatEpisodeTag(item.type, info);
-  airdateEl.textContent = formatAirdateDisplay(info);
+  airdateEl.textContent = formatAirdateDisplay(info, item.type);
 
-  fillTranslatedSummary(summaryEl, item.type === "tv" ? info.summary : null);
+  fillTranslatedSummary(summaryEl, item.type !== "anime" ? info.summary : null);
   renderStreamingList(streamingEl, info.streaming ? [info.streaming] : [], ratingLabel);
 }
 
@@ -1717,11 +1930,39 @@ function formatAnilistStatus(status) {
  * poubelle de la carte). */
 function updateSeasonActionsVisibility(item) {
   const actionsEl = document.getElementById("episode-modal-season-actions");
+  const addBtn = document.getElementById("btn-open-add-season");
   const removeBtn = document.getElementById("btn-remove-last-season");
   const isAnime = item.type === "anime";
-  actionsEl.classList.toggle("hidden", !isAnime);
-  const hasMultipleSeasons = Array.isArray(item.anilist_seasons) && item.anilist_seasons.length >= 2;
+  const isFilm = item.type === "film";
+  const isGroupable = isAnime || isFilm;
+
+  actionsEl.classList.toggle("hidden", !isGroupable);
+  addBtn.classList.toggle("hidden", !isGroupable);
+  addBtn.textContent = isFilm ? "+ Ajouter un film" : "+ Ajouter une saison";
+
+  const hasMultipleSeasons = isFilm
+    ? Array.isArray(item.tmdb_seasons) && item.tmdb_seasons.length >= 2
+    : Array.isArray(item.anilist_seasons) && item.anilist_seasons.length >= 2;
   removeBtn.classList.toggle("hidden", !hasMultipleSeasons);
+  removeBtn.textContent = isFilm ? "🗑 Retirer le dernier film" : "🗑 Retirer la dernière saison";
+}
+
+/** Échange deux entrées adjacentes (voir swapUnwatchedEntries) puis
+ * rafraîchit la section saisons de la modale et les cartes de fond —
+ * factorisé ici puisque appelé depuis plusieurs boutons (▲/▼) construits
+ * dynamiquement par fillSeasonsSection. */
+async function reorderAndRefresh(item, arrayField, index, watchedBoundary, btn) {
+  btn.disabled = true;
+  try {
+    await swapUnwatchedEntries(item.id, arrayField, index, watchedBoundary);
+    const freshRaw = await fetchRawEpisodeData(item, { forceRefresh: true });
+    const progressEpisode = (progress[item.id] && progress[item.id].episode) || 0;
+    fillSeasonsSection(item, freshRaw, progressEpisode, progress[item.id] && progress[item.id].ignored);
+    await renderAll();
+  } catch (e) {
+    alert(e.message);
+    btn.disabled = false;
+  }
 }
 
 /** Remplit la section "détail saison/épisode" de la modale à partir de la
@@ -1731,40 +1972,98 @@ function updateSeasonActionsVisibility(item) {
  * l'anime, AniList (`airingSchedule`) ne fournit que le planning à venir,
  * jamais les dates des épisodes déjà diffusés : le détail reste au niveau
  * de la saison (libellé, total, statut, nombre vus), voir raw.seasons
- * (fetchAnimeRaw / fetchAnimeRawGrouped). */
+ * (fetchAnimeRaw / fetchAnimeRawGrouped).
+ *
+ * Pour un regroupement à plusieurs entrées (item.tmdb_seasons côté film,
+ * item.anilist_seasons côté anime), chaque entrée pas encore vue reçoit des
+ * boutons ▲/▼ pour corriger l'ordre de visionnage (voir
+ * swapUnwatchedEntries) — jamais sur ce qui est déjà vu. */
 function fillSeasonsSection(item, raw, progressEpisode, ignoredIndices) {
   const container = document.getElementById("episode-modal-seasons");
   container.innerHTML = "";
   const ignoredSet = new Set(ignoredIndices || []);
 
-  if (item.type === "tv") {
+  if (item.type === "film" && (raw.episodes || []).length <= 1) {
+    // Film seul (pas de collection) : rien à décomposer, la modale (note,
+    // résumé, sortie) suffit déjà — voir le plan "Support des films".
+    updateSeasonActionsVisibility(item);
+    return;
+  }
+
+  if (item.type === "tv" || item.type === "film") {
+    const isFilm = item.type === "film";
+    // Un film n'a pas de notion de saison : tous ses "épisodes" partagent
+    // season:1 (voir fetchFilmRaw), donc groupEpisodesBySeason produit un
+    // seul groupe — le libellé est adapté en conséquence.
     const groups = groupEpisodesBySeason(raw.episodes);
     groups.forEach((group) => {
       const watchedInSeason = group.episodes.filter(
         (ep) => ep.globalIndex < progressEpisode && !ignoredSet.has(ep.globalIndex)
       ).length;
       const details = el("details", "season-detail");
-      details.appendChild(
-        el("summary", null, `Saison ${group.season} (${watchedInSeason}/${group.episodes.length} épisodes vus)`)
-      );
+      const heading = isFilm
+        ? `Films de la collection (${watchedInSeason}/${group.episodes.length} vus)`
+        : `Saison ${group.season} (${watchedInSeason}/${group.episodes.length} épisodes vus)`;
+      details.appendChild(el("summary", null, heading));
       const body = el("div", "season-detail-body season-episode-list");
+      const canReorder = isFilm && Array.isArray(item.tmdb_seasons) && item.tmdb_seasons.length > 1;
       group.episodes.forEach((ep) => {
         const reached = ep.globalIndex < progressEpisode;
         const isIgnored = reached && ignoredSet.has(ep.globalIndex);
         const watched = reached && !isIgnored;
         const row = el("p", `season-episode-row${watched ? " watched" : ""}`);
-        row.appendChild(el("span", null, `S${pad2(ep.season)}E${pad2(ep.number)}${ep.name ? " — " + ep.name : ""}`));
+        const label = isFilm ? ep.name : `S${pad2(ep.season)}E${pad2(ep.number)}${ep.name ? " — " + ep.name : ""}`;
+        row.appendChild(el("span", null, label));
         const badgeText = watched ? "✓" : isIgnored ? "Ignoré" : ep.airdate || "?";
         const badge = el("span", "season-episode-check", badgeText);
         if (isIgnored) badge.classList.add("ignored");
         row.appendChild(badge);
+
+        // Réordonnancement : jamais sur ce qui est déjà vu (voir
+        // swapUnwatchedEntries) — seule la partie "pas encore vue" peut être
+        // réarrangée, pour corriger un ordre de sortie qui ne correspond pas
+        // à l'ordre de visionnage voulu (ex. Star Wars, préquelles sorties
+        // après coup).
+        if (canReorder && !reached) {
+          const moveControls = el("span", "season-reorder");
+          const upBtn = el("button", "season-reorder-btn", "▲");
+          upBtn.type = "button";
+          upBtn.title = "Avancer ce film";
+          upBtn.disabled = ep.globalIndex - 1 < progressEpisode;
+          upBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            reorderAndRefresh(item, "tmdb_seasons", ep.globalIndex - 1, progressEpisode, upBtn);
+          });
+          const downBtn = el("button", "season-reorder-btn", "▼");
+          downBtn.type = "button";
+          downBtn.title = "Reculer ce film";
+          downBtn.disabled = ep.globalIndex + 1 >= group.episodes.length;
+          downBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            reorderAndRefresh(item, "tmdb_seasons", ep.globalIndex, progressEpisode, downBtn);
+          });
+          moveControls.appendChild(upBtn);
+          moveControls.appendChild(downBtn);
+          row.appendChild(moveControls);
+        }
+
         body.appendChild(row);
       });
       details.appendChild(body);
       container.appendChild(details);
     });
   } else {
-    (raw.seasons || []).forEach((season, idx) => {
+    const seasonsArr = raw.seasons || [];
+    // Réordonnancement : seules les saisons entièrement pas-encore-abordées
+    // peuvent être réarrangées (voir swapUnwatchedEntries) — la première
+    // saison où la progression n'a même pas atteint son offset de départ,
+    // et toutes celles d'après.
+    const firstUnstartedSeasonIdx = seasonsArr.findIndex(
+      (s) => s.offsetStart != null && progressEpisode <= s.offsetStart
+    );
+    const canReorderAnime = Array.isArray(item.anilist_seasons) && item.anilist_seasons.length > 1;
+
+    seasonsArr.forEach((season, idx) => {
       const total = season.totalEpisodes;
       let watched =
         season.offsetStart == null || total == null
@@ -1780,7 +2079,32 @@ function fillSeasonsSection(item, raw, progressEpisode, ignoredIndices) {
         total != null && watched != null ? `${watched}/${total} épisodes vus` : "nombre d'épisodes inconnu";
       const label = season.label ? ` — ${season.label}` : "";
       const details = el("details", "season-detail");
-      details.appendChild(el("summary", null, `Saison ${idx + 1}${label} (${countLabel})`));
+      const summary = el("summary", null, `Saison ${idx + 1}${label} (${countLabel})`);
+
+      if (canReorderAnime && firstUnstartedSeasonIdx !== -1 && idx >= firstUnstartedSeasonIdx) {
+        const moveControls = el("span", "season-reorder");
+        const upBtn = el("button", "season-reorder-btn", "▲");
+        upBtn.type = "button";
+        upBtn.title = "Avancer cette saison";
+        upBtn.disabled = idx - 1 < firstUnstartedSeasonIdx;
+        upBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          reorderAndRefresh(item, "anilist_seasons", idx - 1, firstUnstartedSeasonIdx, upBtn);
+        });
+        const downBtn = el("button", "season-reorder-btn", "▼");
+        downBtn.type = "button";
+        downBtn.title = "Reculer cette saison";
+        downBtn.disabled = idx + 1 >= seasonsArr.length;
+        downBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          reorderAndRefresh(item, "anilist_seasons", idx, firstUnstartedSeasonIdx, downBtn);
+        });
+        moveControls.appendChild(upBtn);
+        moveControls.appendChild(downBtn);
+        summary.appendChild(moveControls);
+      }
+
+      details.appendChild(summary);
       details.appendChild(el("div", "season-detail-body hint", formatAnilistStatus(season.status)));
       container.appendChild(details);
     });
@@ -1884,14 +2208,15 @@ async function openFinishedModal(item, stateEntry) {
   }
 
   tagEl.textContent = "Terminé";
-  airdateEl.textContent = item.type === "tv" ? formatTvLatest(stateEntry) : formatAnimeLatest(stateEntry);
+  airdateEl.textContent =
+    item.type === "tv" ? formatTvLatest(stateEntry) : item.type === "film" ? formatFilmLatest(stateEntry) : formatAnimeLatest(stateEntry);
   showEpisodeModal();
 
   try {
     const raw = await fetchRawEpisodeData(item);
     airdateEl.textContent = computeFinishedStatusLabel(item, stateEntry, raw);
     renderStreamingList(streamingEl, getSeriesStreamingList(item.type, raw), formatRatingLabel(item.type, raw));
-    fillTranslatedSummary(summaryEl, item.type === "tv" ? raw.summary : raw.description);
+    fillTranslatedSummary(summaryEl, item.type === "anime" ? raw.description : raw.summary);
     const progressEpisode = (progress[item.id] && progress[item.id].episode) || 0;
     fillSeasonsSection(item, raw, progressEpisode, progress[item.id] && progress[item.id].ignored);
   } catch (e) {
@@ -1970,7 +2295,11 @@ function setSectionCount(elId, count) {
  * tout seul) ni aux titres réellement finis. Conserve la progression :
  * l'item réapparaît dans "En cours" pile là où il en était. */
 async function autoPromoteUpToDateItems(items) {
-  const promoted = [];
+  // Pas de section "En cours" pour les films (voir le plan "Support des
+  // films") : un nouveau volet sorti les fait revenir en "À regarder",
+  // jamais en "En cours" comme pour série/anime.
+  const promotedToEnCours = [];
+  const promotedToARegarder = [];
   for (const item of items) {
     if (item.abandoned) continue;
     let raw;
@@ -1983,38 +2312,56 @@ async function autoPromoteUpToDateItems(items) {
 
     const progressEpisode = (progress[item.id] && progress[item.id].episode) || 0;
     const info =
-      item.type === "tv"
+      item.type !== "anime"
         ? deriveTvEpisodeInfo(raw, progressEpisode, new Date().toISOString().slice(0, 10))
         : deriveAnimeEpisodeInfo(raw, progressEpisode, Date.now() / 1000);
 
     if (info.kind === "episode" && info.hasAired) {
-      item.status = "en_cours";
-      promoted.push(item);
+      if (item.type === "film") {
+        item.status = "a_regarder";
+        promotedToARegarder.push(item);
+      } else {
+        item.status = "en_cours";
+        promotedToEnCours.push(item);
+      }
     }
   }
 
+  const promoted = promotedToEnCours.concat(promotedToARegarder);
   if (promoted.length) {
     await store.putFile(
       "watchlist.json",
       watchlist,
-      `Statut : ${promoted.map((i) => i.id).join(", ")} -> en_cours (nouvel épisode disponible)`
+      `Statut mis à jour (nouvel épisode disponible) : ${promoted.map((i) => i.id).join(", ")}`
     );
-    if (promoted.length === 1) {
-      showToast(`"${promoted[0].display_title}" : nouvel épisode disponible, de retour en "En cours" !`);
-    } else {
-      showToast(`${promoted.length} séries ont un nouvel épisode disponible et repassent en "En cours" !`);
+    if (promotedToEnCours.length === 1) {
+      showToast(`"${promotedToEnCours[0].display_title}" : nouvel épisode disponible, de retour en "En cours" !`);
+    } else if (promotedToEnCours.length > 1) {
+      showToast(`${promotedToEnCours.length} séries ont un nouvel épisode disponible et repassent en "En cours" !`);
+    } else if (promotedToARegarder.length === 1) {
+      showToast(`"${promotedToARegarder[0].display_title}" : nouveau film disponible, de retour en "À regarder" !`);
+    } else if (promotedToARegarder.length > 1) {
+      showToast(`${promotedToARegarder.length} films ont un nouveau volet disponible et repassent en "À regarder" !`);
     }
   }
 }
 
-/** Fait redescendre en "Terminé" / "À jour" les titres "En cours" dont le
- * prochain épisode connu n'est pas encore diffusé : "En cours" doit vouloir
- * dire "il y a quelque chose à regarder maintenant", pas "on attend une
- * date de diffusion connue" — ce qui est exactement la définition de "À
- * jour" (complément d'autoPromoteUpToDateItems, dans l'autre sens). Ne
- * s'applique qu'aux items dont le prochain épisode est identifié ; le cas
- * "plus aucun épisode connu du tout" est déjà géré par markFinished au
- * moment du clic "✓ Vu"/ajustement (voir applyEpisodeProgress). */
+/** Fait basculer en "Terminé" / "À jour" les titres dont le prochain
+ * épisode connu n'est pas encore diffusé : "En cours" (séries/animes) doit
+ * vouloir dire "il y a quelque chose à regarder maintenant", pas "on
+ * attend une date de diffusion connue" — ce qui est exactement la
+ * définition de "À jour" (complément d'autoPromoteUpToDateItems, dans
+ * l'autre sens). Ne s'applique qu'aux items dont le prochain épisode est
+ * identifié ; le cas "plus aucun épisode connu du tout" est déjà géré par
+ * markFinished au moment du clic "✓ Vu"/ajustement (voir
+ * applyEpisodeProgress).
+ *
+ * Appelée à la fois sur le panier "En cours" (séries/animes) ET, pour les
+ * films (qui n'ont pas de section "En cours", voir le plan "Support des
+ * films"), sur les titres "À regarder" déjà entamés : sans ce deuxième cas,
+ * une collection dont on a vu tous les volets sortis mais pas le suivant
+ * (déjà annoncé, pas encore sorti) resterait coincée dans "À regarder" au
+ * lieu de rejoindre "Terminé"/"À jour". */
 async function autoDemoteWaitingItems(items) {
   for (const item of items) {
     let info;
@@ -2035,7 +2382,13 @@ async function renderAll() {
   // catégorie non affichée ne serait jamais re-vérifié tant qu'on ne
   // rouvre pas son onglet.
   const initialGroups = groupByStatus(watchlist.items);
-  await autoDemoteWaitingItems(initialGroups.en_cours);
+  // Films entamés dans "À regarder" (au moins un volet vu) : pas de section
+  // "En cours" pour ce type, donc à vérifier ici en plus du panier "En
+  // cours" (voir le commentaire d'autoDemoteWaitingItems).
+  const startedFilmsAwaitingNext = initialGroups.a_regarder.filter(
+    (item) => item.type === "film" && progress[item.id] && progress[item.id].episode > 0
+  );
+  await autoDemoteWaitingItems(initialGroups.en_cours.concat(startedFilmsAwaitingNext));
   await autoPromoteUpToDateItems(initialGroups.termine);
 
   renderCategoryChrome();
@@ -2125,16 +2478,16 @@ async function markFinished(itemId) {
   await store.putFile("watchlist.json", watchlist, `Statut : ${itemId} -> terminé`);
 }
 
-/** Repasse un titre "Terminé" en "En cours" pour le regarder à nouveau
- * depuis l'épisode 1 (que la série soit toujours en diffusion ou
- * vraiment finie, "Regarder à nouveau" veut dans les deux cas dire
- * repartir de zéro) — `finished_history` est conservé, il sert de
- * compteur de rewatchs affiché sur la carte "En cours" résultante. */
+/** Repasse un titre "Terminé" en "En cours" (ou "À regarder" pour un film,
+ * qui n'a pas de section "En cours" — voir le plan "Support des films")
+ * pour le regarder à nouveau depuis le début — `finished_history` est
+ * conservé, il sert de compteur de rewatchs affiché sur la carte
+ * résultante. */
 async function watchAgain(itemId) {
   const item = watchlist.items.find((i) => i.id === itemId);
   if (!item) return;
-  item.status = "en_cours";
-  await store.putFile("watchlist.json", watchlist, `Statut : ${itemId} -> en_cours (revisionnage)`);
+  item.status = item.type === "film" ? "a_regarder" : "en_cours";
+  await store.putFile("watchlist.json", watchlist, `Statut : ${itemId} -> ${item.status} (revisionnage)`);
   progress[itemId] = { episode: 0 };
   await store.putFile("progress.json", progress, `Progression : ${itemId} réinitialisée (revisionnage)`);
 }
@@ -2162,7 +2515,7 @@ async function applyEpisodeProgress(item, newEpisode, raw, { ignoreIndex } = {})
   );
 
   const info =
-    item.type === "tv"
+    item.type !== "anime"
       ? deriveTvEpisodeInfo(raw, newEpisode, new Date().toISOString().slice(0, 10))
       : deriveAnimeEpisodeInfo(raw, newEpisode, Date.now() / 1000);
 
@@ -2205,7 +2558,7 @@ async function ignoreEpisode(item) {
 
 /** Ajoute un nouveau titre à la watchlist (résultat de recherche + statut
  * choisis par l'utilisateur dans le panneau d'ajout). */
-async function addNewItem({ title, type, searchTitle, anilistId, status }) {
+async function addNewItem({ title, type, searchTitle, anilistId, tmdbId, status }) {
   const existingIds = new Set(watchlist.items.map((i) => i.id));
   const id = uniqueId(slugify(title), existingIds);
 
@@ -2217,6 +2570,7 @@ async function addNewItem({ title, type, searchTitle, anilistId, status }) {
     status,
   };
   if (anilistId) newItem.anilist_id = anilistId;
+  if (tmdbId) newItem.tmdb_id = tmdbId;
   if (status === "termine") newItem.finished_history = [todayIso()];
 
   watchlist.items.push(newItem);
@@ -2255,6 +2609,34 @@ async function addGroupedAnimeItem({ title, seasons, status }) {
 
   watchlist.items.push(newItem);
   await store.putFile("watchlist.json", watchlist, `Ajout (groupé, ${seasons.length} saisons) : ${title}`);
+
+  if (status === "en_cours") {
+    progress[id] = { episode: 0 };
+    await store.putFile("progress.json", progress, `Progression : ${id} initialisée`);
+  }
+
+  return id;
+}
+
+/** Équivalent film de addGroupedAnimeItem : ajoute un titre regroupant
+ * plusieurs films TMDb (une saga sélectionnée à la main, façon regroupement
+ * de saisons anime) en une seule carte de suivi. */
+async function addGroupedFilmItem({ title, films, status }) {
+  const existingIds = new Set(watchlist.items.map((i) => i.id));
+  const id = uniqueId(slugify(title), existingIds);
+
+  const newItem = {
+    id,
+    display_title: title,
+    search_title: films[0].search_title,
+    type: "film",
+    status,
+    tmdb_seasons: films.map((f) => ({ tmdb_id: f.tmdb_id, search_title: f.search_title })),
+  };
+  if (status === "termine") newItem.finished_history = [todayIso()];
+
+  watchlist.items.push(newItem);
+  await store.putFile("watchlist.json", watchlist, `Ajout (groupé, ${films.length} films) : ${title}`);
 
   if (status === "en_cours") {
     progress[id] = { episode: 0 };
@@ -2320,6 +2702,80 @@ async function removeLastSeason(itemId, clampedEpisode) {
   saveEpisodeCache(cache);
 }
 
+/** Équivalent film de addSeasonToItem : ajoute un film à un item déjà
+ * groupé (ou initialise le regroupement à partir d'un film simple), depuis
+ * la modale de détail. Même règle de validation que pour les saisons anime
+ * (voir initEpisodeModal) : le film choisi doit être plus récent que le
+ * dernier déjà suivi. */
+async function addFilmToItem(itemId, filmResult) {
+  const item = watchlist.items.find((i) => i.id === itemId);
+  if (!item) return;
+
+  if (!Array.isArray(item.tmdb_seasons)) {
+    item.tmdb_seasons = [{ tmdb_id: item.tmdb_id, search_title: item.search_title }];
+  }
+  item.tmdb_seasons.push({ tmdb_id: filmResult.tmdb_id, search_title: filmResult.search_title });
+  await store.putFile(
+    "watchlist.json",
+    watchlist,
+    `Film ajouté : ${itemId} (+${filmResult.search_title || filmResult.tmdb_id})`
+  );
+
+  const cache = loadEpisodeCache();
+  delete cache[itemId];
+  saveEpisodeCache(cache);
+}
+
+/** Équivalent film de removeLastSeason : retire le dernier film connu d'un
+ * regroupement (item.tmdb_seasons), utile si le regroupement a été fait à
+ * tort ou pour retirer un volet ajouté par erreur. */
+async function removeLastFilmPart(itemId, clampedEpisode) {
+  const item = watchlist.items.find((i) => i.id === itemId);
+  if (!item || !Array.isArray(item.tmdb_seasons) || item.tmdb_seasons.length < 2) return;
+
+  item.tmdb_seasons.pop();
+  await store.putFile("watchlist.json", watchlist, `Film retiré (dernier) : ${itemId}`);
+
+  if (typeof clampedEpisode === "number" && progress[itemId] && progress[itemId].episode > clampedEpisode) {
+    progress[itemId] = { episode: clampedEpisode };
+    await store.putFile(
+      "progress.json",
+      progress,
+      `Progression : ${itemId} ramenée à l'épisode ${clampedEpisode} (volet retiré)`
+    );
+  }
+
+  const cache = loadEpisodeCache();
+  delete cache[itemId];
+  saveEpisodeCache(cache);
+}
+
+/** Échange deux entrées adjacentes d'un regroupement (item.anilist_seasons
+ * pour l'anime, item.tmdb_seasons pour un film) — pour corriger un ordre de
+ * sortie qui ne correspond pas à l'ordre de visionnage voulu (ex.
+ * préquelle sortie après coup, saison bonus à intercaler). Restriction
+ * volontaire : `index` et `index + 1` doivent tous les deux être encore
+ * NON vus (>= au seuil `watchedBoundary` fourni par l'appelant, qui sait
+ * traduire la progression en position dans CE tableau précis — un index
+ * brut pour un film, un seuil par offset de saison pour l'anime). Ne
+ * jamais réordonner ce qui est déjà vu : la progression est un simple
+ * curseur de position, pas un identifiant, donc rejouer l'ordre d'une
+ * partie déjà regardée changerait rétroactivement ce qui compte comme vu. */
+async function swapUnwatchedEntries(itemId, arrayField, index, watchedBoundary) {
+  const item = watchlist.items.find((i) => i.id === itemId);
+  if (!item || !Array.isArray(item[arrayField])) return;
+  const arr = item[arrayField];
+  if (index < 0 || index + 1 >= arr.length) return;
+  if (index < watchedBoundary) return;
+
+  [arr[index], arr[index + 1]] = [arr[index + 1], arr[index]];
+  await store.putFile("watchlist.json", watchlist, `Ordre modifié (${arrayField}) : ${itemId}`);
+
+  const cache = loadEpisodeCache();
+  delete cache[itemId];
+  saveEpisodeCache(cache);
+}
+
 /** Retire un titre de la watchlist et nettoie sa progression associée
  * (l'entrée dans state.json, elle, reste orpheline mais inoffensive :
  * le bot de notif ne regarde que les ids présents dans watchlist.json). */
@@ -2349,6 +2805,18 @@ function saveConfig(cfg) {
   localStorage.setItem(LS.repo, cfg.repo);
   localStorage.setItem(LS.branch, cfg.branch || "main");
   localStorage.setItem(LS.token, cfg.token);
+}
+
+/** Clé API TMDb (v3), indépendante de la config GitHub : optionnelle tant
+ * qu'on n'essaie pas de charger un film (voir fetchFilmRaw), donc jamais
+ * bloquante pour le reste de l'app. */
+function getTmdbKey() {
+  return localStorage.getItem(LS.tmdbKey) || null;
+}
+
+function saveTmdbKey(key) {
+  if (key) localStorage.setItem(LS.tmdbKey, key);
+  else localStorage.removeItem(LS.tmdbKey);
 }
 
 function showScreen(id) {
@@ -2396,6 +2864,8 @@ function initSetupScreen() {
   if (cfg.owner) document.getElementById("input-owner").value = cfg.owner;
   if (cfg.repo) document.getElementById("input-repo").value = cfg.repo;
   if (cfg.branch) document.getElementById("input-branch").value = cfg.branch;
+  const tmdbKey = getTmdbKey();
+  if (tmdbKey) document.getElementById("input-tmdb-key").value = tmdbKey;
 
   document.getElementById("btn-save-setup").addEventListener("click", async () => {
     const owner = document.getElementById("input-owner").value.trim();
@@ -2412,6 +2882,9 @@ function initSetupScreen() {
     }
 
     saveConfig({ owner, repo, branch, token });
+    // Optionnelle : ne bloque jamais l'enregistrement du reste (voir
+    // getTmdbKey/fetchFilmRaw, qui ne l'exige qu'au moment de charger un film).
+    saveTmdbKey(document.getElementById("input-tmdb-key").value.trim());
     await boot();
   });
 }
@@ -2450,12 +2923,17 @@ function initEpisodeModal() {
     }
   });
 
-  // "+ Ajouter une saison" bascule le petit panneau de recherche (façon
-  // panneau d'ajout principal, mais scopé à la série affichée).
+  // "+ Ajouter une saison"/"+ Ajouter un film" bascule le petit panneau de
+  // recherche (façon panneau d'ajout principal, mais scopé à la série/au
+  // regroupement affiché).
   openAddSeasonBtn.addEventListener("click", () => {
     const wasHidden = addSeasonPanel.classList.contains("hidden");
     resetAddSeasonPanel();
     if (wasHidden) {
+      addSeasonInput.placeholder =
+        modalItem && modalItem.type === "film"
+          ? "Titre d'un autre épisode de la collection à ajouter…"
+          : "Titre de la saison à ajouter…";
       addSeasonPanel.classList.remove("hidden");
       addSeasonInput.focus();
     }
@@ -2464,24 +2942,31 @@ function initEpisodeModal() {
   async function runAddSeasonSearch() {
     const query = addSeasonInput.value.trim();
     if (!query || !modalItem) return;
+    const isFilm = modalItem.type === "film";
     addSeasonStatus.textContent = "Recherche…";
     addSeasonResults.innerHTML = "";
     addSeasonError.classList.add("hidden");
 
     try {
-      const results = await searchAnilistMulti(query);
+      const results = isFilm ? await searchTmdbMulti(query) : await searchAnilistMulti(query);
       const existingIds = new Set(
-        Array.isArray(modalItem.anilist_seasons)
-          ? modalItem.anilist_seasons.map((s) => s.anilist_id)
-          : modalItem.anilist_id
-            ? [modalItem.anilist_id]
-            : []
+        isFilm
+          ? Array.isArray(modalItem.tmdb_seasons)
+            ? modalItem.tmdb_seasons.map((s) => s.tmdb_id)
+            : modalItem.tmdb_id
+              ? [modalItem.tmdb_id]
+              : []
+          : Array.isArray(modalItem.anilist_seasons)
+            ? modalItem.anilist_seasons.map((s) => s.anilist_id)
+            : modalItem.anilist_id
+              ? [modalItem.anilist_id]
+              : []
       );
       addSeasonStatus.textContent = results.length ? `${results.length} résultat(s)` : "Aucun résultat.";
       addSeasonResults.innerHTML = "";
 
       for (const r of results) {
-        const already = existingIds.has(r.anilist_id);
+        const already = existingIds.has(isFilm ? r.tmdb_id : r.anilist_id);
         const row = el("div", "result-item");
         if (already) row.classList.add("already-added");
 
@@ -2506,32 +2991,51 @@ function initEpisodeModal() {
         if (already) {
           addBtn.classList.add("added");
           addBtn.disabled = true;
-          addBtn.title = "Déjà une saison de ce titre";
+          addBtn.title = isFilm ? "Déjà un film de ce regroupement" : "Déjà une saison de ce titre";
         } else {
-          addBtn.title = "Ajouter comme nouvelle saison";
+          addBtn.title = isFilm ? "Ajouter comme film suivant" : "Ajouter comme nouvelle saison";
           addBtn.addEventListener("click", async () => {
-            addBtn.disabled = true;
+            addBtn.disabled = true; // avant tout await : évite un double-ajout sur double-clic
             addSeasonError.classList.add("hidden");
             try {
               // Refus explicite plutôt qu'une insertion silencieuse au
-              // milieu : ça décalerait la numérotation continue des saisons
-              // suivantes et invaliderait la progression déjà enregistrée
-              // (voir le commentaire de addSeasonToItem).
+              // milieu : ça décalerait la numérotation continue et
+              // invaliderait la progression déjà enregistrée (voir le
+              // commentaire de addSeasonToItem/addFilmToItem).
               const raw = await fetchRawEpisodeData(modalItem);
-              const seasons = raw.seasons || [];
-              const lastYear = seasons.length ? parseInt(seasons[seasons.length - 1].year, 10) : null;
+              let lastYear = null;
+              if (isFilm) {
+                const episodes = raw.episodes || [];
+                const lastAirdate = episodes.length ? episodes[episodes.length - 1].airdate : null;
+                lastYear = lastAirdate ? parseInt(lastAirdate.slice(0, 4), 10) : null;
+              } else {
+                const seasons = raw.seasons || [];
+                lastYear = seasons.length ? parseInt(seasons[seasons.length - 1].year, 10) : null;
+              }
               const candidateYear = parseInt(r.year, 10);
               if (lastYear && candidateYear && candidateYear < lastYear) {
-                throw new Error("Cette saison doit être plus récente que la dernière saison déjà suivie.");
+                throw new Error(
+                  isFilm
+                    ? "Ce film doit être plus récent que le dernier déjà suivi."
+                    : "Cette saison doit être plus récente que la dernière saison déjà suivie."
+                );
               }
 
               const itemId = modalItem.id;
-              await addSeasonToItem(itemId, r);
+              if (isFilm) {
+                await addFilmToItem(itemId, r);
+              } else {
+                await addSeasonToItem(itemId, r);
+              }
               const freshRaw = await fetchRawEpisodeData(modalItem, { forceRefresh: true });
               const progressEpisode = (progress[itemId] && progress[itemId].episode) || 0;
-              fillSeasonsSection(modalItem, freshRaw, progressEpisode);
+              fillSeasonsSection(modalItem, freshRaw, progressEpisode, progress[itemId] && progress[itemId].ignored);
               resetAddSeasonPanel();
-              showToast(`Saison ajoutée à "${modalItem.display_title}" !`);
+              showToast(
+                isFilm
+                  ? `Film ajouté à "${modalItem.display_title}" !`
+                  : `Saison ajoutée à "${modalItem.display_title}" !`
+              );
               await renderAll();
             } catch (e) {
               addBtn.disabled = false;
@@ -2558,25 +3062,42 @@ function initEpisodeModal() {
   removeLastSeasonBtn.addEventListener("click", async () => {
     if (!modalItem) return;
     const itemId = modalItem.id;
+    const isFilm = modalItem.type === "film";
     removeLastSeasonBtn.disabled = true;
     try {
       const raw = await fetchRawEpisodeData(modalItem);
-      const seasons = raw.seasons || [];
-      const lastSeason = seasons[seasons.length - 1];
-      const clampedEpisode = lastSeason ? lastSeason.offsetStart : null;
       const currentProgress = (progress[itemId] && progress[itemId].episode) || 0;
+      let clampedEpisode = null;
+      let message;
 
-      let message = `Retirer la dernière saison de "${modalItem.display_title}" ?`;
-      if (typeof clampedEpisode === "number" && currentProgress > clampedEpisode) {
-        message += ` La progression enregistrée (épisode ${currentProgress}) sera ramenée à l'épisode ${clampedEpisode}, la suite appartenant à la saison retirée.`;
+      if (isFilm) {
+        clampedEpisode = Math.max(0, (raw.episodes || []).length - 1);
+        message = `Retirer le dernier film de "${modalItem.display_title}" ?`;
+        if (currentProgress > clampedEpisode) {
+          message += ` La progression enregistrée (${currentProgress} film(s) vu(s)) sera ramenée à ${clampedEpisode}, la suite appartenant au film retiré.`;
+        }
+      } else {
+        const seasons = raw.seasons || [];
+        const lastSeason = seasons[seasons.length - 1];
+        clampedEpisode = lastSeason ? lastSeason.offsetStart : null;
+        message = `Retirer la dernière saison de "${modalItem.display_title}" ?`;
+        if (typeof clampedEpisode === "number" && currentProgress > clampedEpisode) {
+          message += ` La progression enregistrée (épisode ${currentProgress}) sera ramenée à l'épisode ${clampedEpisode}, la suite appartenant à la saison retirée.`;
+        }
       }
       if (!confirm(message)) return;
 
-      await removeLastSeason(itemId, clampedEpisode);
+      if (isFilm) {
+        await removeLastFilmPart(itemId, clampedEpisode);
+      } else {
+        await removeLastSeason(itemId, clampedEpisode);
+      }
       const freshRaw = await fetchRawEpisodeData(modalItem, { forceRefresh: true });
       const progressEpisode = (progress[itemId] && progress[itemId].episode) || 0;
-      fillSeasonsSection(modalItem, freshRaw, progressEpisode);
-      showToast(`Saison retirée de "${modalItem.display_title}".`);
+      fillSeasonsSection(modalItem, freshRaw, progressEpisode, progress[itemId] && progress[itemId].ignored);
+      showToast(
+        isFilm ? `Film retiré de "${modalItem.display_title}".` : `Saison retirée de "${modalItem.display_title}".`
+      );
       await renderAll();
     } catch (e) {
       alert(e.message);
@@ -2697,9 +3218,10 @@ function initAddPanel() {
 
   let currentType = "tv";
   let currentStatus = "a_regarder";
-  // Sélection courante pour le regroupement de saisons (anime uniquement),
-  // remise à zéro à chaque nouvelle recherche/fermeture du panneau.
-  // Clé : anilist_id -> { result, checkbox }.
+  // Sélection courante pour le regroupement (anime : plusieurs saisons AniList,
+  // film : plusieurs volets TMDb — même mécanisme pour les deux), remise à
+  // zéro à chaque nouvelle recherche/fermeture du panneau.
+  // Clé : anilist_id ou tmdb_id -> résultat de recherche.
   let selectedForGroup = new Map();
 
   function updateGroupBar() {
@@ -2709,7 +3231,8 @@ function initAddPanel() {
       return;
     }
     groupBar.classList.remove("hidden");
-    groupCountEl.textContent = `${count} saisons sélectionnées`;
+    const isFilm = Array.from(selectedForGroup.values())[0].type === "film";
+    groupCountEl.textContent = `${count} ${isFilm ? "films sélectionnés" : "saisons sélectionnées"}`;
   }
 
   function resetPanel() {
@@ -2752,11 +3275,24 @@ function initAddPanel() {
     }
   });
 
+  const enCoursStatusBtn = document.getElementById("status-btn-en-cours");
+
   typeButtons.forEach((btn) => {
     btn.addEventListener("click", () => {
       typeButtons.forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
       currentType = btn.dataset.type;
+
+      // Pas de section "En cours" pour les films (voir le plan) : ce choix
+      // de statut n'a pas de sens à l'ajout, on le masque et on retombe sur
+      // "À regarder" si jamais il était sélectionné.
+      const isFilm = currentType === "film";
+      enCoursStatusBtn.classList.toggle("hidden", isFilm);
+      if (isFilm && currentStatus === "en_cours") {
+        statusButtons.forEach((b) => b.classList.remove("active"));
+        document.querySelector('.status-btn[data-status="a_regarder"]').classList.add("active");
+        currentStatus = "a_regarder";
+      }
     });
   });
 
@@ -2778,7 +3314,12 @@ function initAddPanel() {
     updateGroupBar();
 
     try {
-      const results = currentType === "tv" ? await searchTvmazeMulti(query) : await searchAnilistMulti(query);
+      const results =
+        currentType === "tv"
+          ? await searchTvmazeMulti(query)
+          : currentType === "anime"
+          ? await searchAnilistMulti(query)
+          : await searchTmdbMulti(query);
       statusEl.textContent = results.length ? `${results.length} résultat(s)` : "Aucun résultat.";
       resultsEl.innerHTML = "";
       for (const r of results) {
@@ -2786,20 +3327,22 @@ function initAddPanel() {
         const already = isAlreadyAdded(r, watchlist.items);
         if (already) item.classList.add("already-added");
 
-        // Case à cocher pour regrouper plusieurs saisons d'un même anime en
-        // une seule carte de suivi (chaque saison est une fiche AniList
-        // distincte côté API) : voir la barre "Regrouper..." plus bas.
-        if (r.type === "anime" && !already && r.anilist_id) {
+        // Case à cocher pour regrouper plusieurs saisons anime (ou plusieurs
+        // films d'une même saga) en une seule carte de suivi : voir la barre
+        // "Regrouper..." plus bas. Même mécanisme pour les deux types.
+        const groupKey = r.anilist_id || r.tmdb_id;
+        if ((r.type === "anime" || r.type === "film") && !already && groupKey) {
           const checkbox = document.createElement("input");
           checkbox.type = "checkbox";
           checkbox.className = "result-select";
-          checkbox.title = "Sélectionner pour regrouper avec d'autres saisons";
+          checkbox.title =
+            r.type === "film" ? "Sélectionner pour regrouper avec d'autres films" : "Sélectionner pour regrouper avec d'autres saisons";
           checkbox.addEventListener("click", (e) => e.stopPropagation());
           checkbox.addEventListener("change", () => {
             if (checkbox.checked) {
-              selectedForGroup.set(r.anilist_id, r);
+              selectedForGroup.set(groupKey, r);
             } else {
-              selectedForGroup.delete(r.anilist_id);
+              selectedForGroup.delete(groupKey);
             }
             updateGroupBar();
           });
@@ -2836,7 +3379,7 @@ function initAddPanel() {
         } else {
           addBtn.title = "Ajouter";
           addBtn.addEventListener("click", async () => {
-            addBtn.disabled = true;
+            addBtn.disabled = true; // avant tout await : évite un double-ajout sur double-clic
             errorEl.classList.add("hidden");
             try {
               await addNewItem({
@@ -2844,6 +3387,7 @@ function initAddPanel() {
                 type: r.type,
                 searchTitle: r.search_title,
                 anilistId: r.anilist_id,
+                tmdbId: r.tmdb_id,
                 status: currentStatus,
               });
               addBtn.textContent = "✓";
@@ -2871,10 +3415,11 @@ function initAddPanel() {
       (a, b) => (parseInt(a.year, 10) || 0) - (parseInt(b.year, 10) || 0)
     );
     if (seasons.length < 2) return;
+    const isFilm = seasons[0].type === "film";
 
     const defaultTitle = seasons[0].title;
     const title = prompt(
-      `Titre affiché pour ce regroupement de ${seasons.length} saisons :`,
+      `Titre affiché pour ce regroupement de ${seasons.length} ${isFilm ? "films" : "saisons"} :`,
       defaultTitle
     );
     if (!title || !title.trim()) return;
@@ -2882,12 +3427,20 @@ function initAddPanel() {
     groupBtn.disabled = true;
     errorEl.classList.add("hidden");
     try {
-      await addGroupedAnimeItem({
-        title: title.trim(),
-        seasons: seasons.map((s) => ({ anilist_id: s.anilist_id, search_title: s.search_title })),
-        status: currentStatus,
-      });
-      showToast(`"${title.trim()}" ajouté (${seasons.length} saisons regroupées) !`);
+      if (isFilm) {
+        await addGroupedFilmItem({
+          title: title.trim(),
+          films: seasons.map((s) => ({ tmdb_id: s.tmdb_id, search_title: s.search_title })),
+          status: currentStatus,
+        });
+      } else {
+        await addGroupedAnimeItem({
+          title: title.trim(),
+          seasons: seasons.map((s) => ({ anilist_id: s.anilist_id, search_title: s.search_title })),
+          status: currentStatus,
+        });
+      }
+      showToast(`"${title.trim()}" ajouté (${seasons.length} ${isFilm ? "films regroupés" : "saisons regroupées"}) !`);
       selectedForGroup = new Map();
       updateGroupBar();
       await renderAll();
@@ -2937,12 +3490,26 @@ function initWatchlistSearch() {
 /** Bascule d'onglet de catégorie (Séries/Animés/Films/Mangas-Scans) : ne
  * fait que changer `activeCategory` et redemander un rendu, tout le reste
  * (filtrage, statuts, cartes) est déjà géré par renderAll(). */
+/** "En cours" n'a pas vraiment de sens pour les films (pas de notion
+ * d'épisode en cours de diffusion) : sur cet onglet, "À regarder" passe
+ * devant et reste ouvert par défaut, "En cours" repasse en second et se
+ * replie. Appelé uniquement au changement d'onglet (pas à chaque
+ * renderAll()), pour ne pas écraser un repli/dépli manuel de l'utilisateur
+ * entre deux actions sur le même onglet. */
+function applyCategoryDefaultOpenState(category) {
+  // "En cours" n'existe pas pour les films (masquée entièrement, voir
+  // renderCategoryChrome) : "À regarder" devient la section ouverte par
+  // défaut sur cet onglet, comme "En cours" l'est pour Séries/Animés.
+  document.getElementById("group-a-regarder").open = category === "films";
+}
+
 function initCategoryTabs() {
   const tabs = document.querySelectorAll(".category-tab");
   tabs.forEach((tab) => {
     tab.addEventListener("click", () => {
       activeCategory = tab.dataset.category;
       tabs.forEach((t) => t.classList.toggle("active", t === tab));
+      applyCategoryDefaultOpenState(activeCategory);
       renderAll();
     });
   });

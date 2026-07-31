@@ -44,6 +44,9 @@
     <label>Token d'accès personnel (fine-grained, permission Contents: Read and write)
       <input id="input-token" type="password" placeholder="github_pat_..." autocomplete="off" />
     </label>
+    <label>Clé API TMDb (v3, optionnelle — nécessaire uniquement pour suivre des films)
+      <input id="input-tmdb-key" type="text" placeholder="Clé v3 depuis themoviedb.org" autocapitalize="off" autocomplete="off" />
+    </label>
     <button id="btn-save-setup" class="primary-btn">Enregistrer et charger</button>
     <p id="setup-error" class="error hidden"></p>
   </section>
@@ -64,7 +67,7 @@
         <span class="tab-icon">🍥</span>Animés
       </button>
       <button type="button" class="category-tab" data-category="films">
-        <span class="tab-icon">🎬</span>Films<span class="tab-soon">Bientôt</span>
+        <span class="tab-icon">🎬</span>Films
       </button>
       <button type="button" class="category-tab" data-category="manga">
         <span class="tab-icon">📖</span>Mangas/Scans<span class="tab-soon">Bientôt</span>
@@ -76,17 +79,17 @@
     </div>
 
     <div id="category-sections">
-      <section class="group">
-        <h2>En cours <span id="count-en-cours" class="section-count"></span></h2>
+      <details class="group group-collapsible" id="group-en-cours" open>
+        <summary>En cours <span id="count-en-cours" class="section-count"></span></summary>
         <div id="list-en-cours" class="card-list"></div>
-      </section>
+      </details>
 
-      <details class="group group-collapsible">
+      <details class="group group-collapsible" id="group-a-regarder">
         <summary>À regarder <span id="count-a-regarder" class="section-count"></span></summary>
         <div id="list-a-regarder" class="card-list"></div>
       </details>
 
-      <details class="group group-collapsible">
+      <details class="group group-collapsible" id="group-termine">
         <summary>Terminé <span id="count-termine" class="section-count"></span></summary>
         <div class="subgroup">
           <h3 class="subgroup-title">À jour <span class="subgroup-hint">(suite à venir)</span> <span id="count-termine-attente" class="section-count"></span></h3>
@@ -125,12 +128,13 @@
     <div class="type-toggle">
       <button type="button" class="type-btn active" data-type="tv">Série</button>
       <button type="button" class="type-btn" data-type="anime">Anime</button>
+      <button type="button" class="type-btn" data-type="film">Film</button>
     </div>
 
     <h3 class="panel-label">Ajouter dans quelle liste ?</h3>
     <div class="status-choice">
       <button type="button" class="small-btn status-btn active" data-status="a_regarder">À regarder</button>
-      <button type="button" class="small-btn status-btn" data-status="en_cours">En cours</button>
+      <button type="button" class="small-btn status-btn" data-status="en_cours" id="status-btn-en-cours">En cours</button>
       <button type="button" class="small-btn status-btn" data-status="termine">Terminé</button>
     </div>
 

@@ -58,6 +58,13 @@ main { padding: 16px; max-width: 640px; margin: 0 auto; }
 
 .screen.hidden { display: none; }
 
+/* Filet de sécurité générique : plusieurs endroits du code font
+   classList.toggle("hidden", ...) sur des éléments qui n'ont pas de règle
+   .xxx.hidden dédiée (ex. les boutons "+ Ajouter une saison"/"🗑 Retirer..."
+   de la modale de détail) — sans ça, la classe est bien posée mais rien ne
+   la rend invisible. */
+.hidden { display: none; }
+
 /* --------- Onglets de catégorie (Séries/Animés/Films/Mangas-Scans) --------- */
 
 .category-tabs {
@@ -97,6 +104,11 @@ main { padding: 16px; max-width: 640px; margin: 0 auto; }
 }
 
 #category-sections.hidden { display: none; }
+
+/* "En cours" n'a pas de sens pour les films (voir renderCategoryChrome) :
+   la section est entièrement masquée sur cet onglet (classe .hidden
+   générique, voir plus haut) plutôt que juste repliée, "À regarder"
+   devenant naturellement la première section visible. */
 
 /* État "catégorie pas encore prise en charge" (Films, Mangas/Scans). */
 .category-placeholder {
@@ -686,6 +698,24 @@ button.small-btn.watch-again {
   background: rgba(154,154,154,0.2);
   color: var(--text-dim);
 }
+
+/* Boutons ▲/▼ de réordonnancement (collections film/anime, voir
+   swapUnwatchedEntries) — volontairement petits et discrets, uniquement
+   sur les entrées pas encore vues. */
+.season-reorder { display: inline-flex; gap: 2px; margin-left: auto; }
+button.season-reorder-btn {
+  background: #2a2a2a;
+  border: 1px solid var(--card-border);
+  color: var(--text);
+  border-radius: 6px;
+  width: 22px;
+  height: 22px;
+  line-height: 1;
+  font-size: 0.7rem;
+  padding: 0;
+  cursor: pointer;
+}
+button.season-reorder-btn:disabled { opacity: 0.3; cursor: default; }
 
 .season-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .season-actions.hidden { display: none; }
