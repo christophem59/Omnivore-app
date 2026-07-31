@@ -1,6 +1,6 @@
 # Backlog — Omnivore
 
-_Dernière mise à jour : 2026-07-30_
+_Dernière mise à jour : 2026-07-31_
 
 ## En cours de traitement
 
@@ -10,12 +10,13 @@ Rien actuellement — support des films en cours de test utilisateur réel, reto
 
 ### 1. Fonctionnalités transverses
 
+- **[PRIO] Recherche/ajout scopés à la catégorie active** : la recherche ne doit renvoyer que des résultats du type de l'onglet courant et n'ajouter que dans cette catégorie. Ex. sur l'onglet Films → uniquement des films (pas de série ni de manga), et l'ajout se fait dans Films.
 - Vue "cette semaine" façon calendrier.
 
 ### 2. Extension du périmètre
 
 - Suivi des mangas via MangaDex, progression par chapitre.
-- Lecture vidéo intégrée : embarquer les flux de streaming pour visionner directement depuis l'app plutôt que de rediriger vers le service externe. À creuser (faisabilité technique/légale selon les plateformes).
+- Lecture intégrée via serveur média perso (piste ouverte, sans échéance) : intégration Jellyfin/Plex pour lire depuis Omnivore une bibliothèque **de contenu qu'on possède légalement** (fichiers perso, rips de ses propres Blu-ray/DVD), avec marquage "vu" automatique par scrobbling (webhook Jellyfin ou Trakt). Conditionné au fait d'avoir un jour la motivation de constituer cette bibliothèque numérique. Écarté : capter/agréger des flux de streaming externes (illégal, instable) et les serveurs Jellyfin/Plex "partagés" publics (piratage). Le besoin courant "où regarder" est déjà couvert par l'affichage des services de streaming officiels.
 - Films : services de streaming disponibles (nécessite un appel TMDb par film + gestion de région, volontairement hors scope au premier passage).
 
 ### 3. Design
