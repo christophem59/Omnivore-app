@@ -107,10 +107,20 @@ main { padding: 16px; max-width: 640px; margin: 0 auto; }
 
 /* --------- Onglets de catégorie (Séries/Animés/Films/Mangas-Scans) --------- */
 
+/* Bandeau d'onglets rendu collant juste SOUS la topbar (elle-même sticky
+   top:0). `--topbar-h` est mesurée en JS (hauteur réelle, encoche/safe-area
+   comprise) ; repli à 64px si le JS n'a pas encore tourné. Fond flouté opaque
+   pour masquer le contenu qui défile dessous. */
 .category-tabs {
   display: flex;
   margin: -16px -16px 16px;
   border-bottom: 1px solid var(--card-border);
+  position: sticky;
+  top: var(--topbar-h, 64px);
+  z-index: 9;
+  background: rgba(13, 11, 26, 0.92);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 .category-tab {
   flex: 1;

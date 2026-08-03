@@ -3781,6 +3781,17 @@ function initCategoryTabs() {
 /* Le bootstrap réel ne s'exécute que dans un navigateur (pas lors des
    tests Node, où `document` n'existe pas). */
 if (typeof document !== "undefined") {
+  // Renseigne `--topbar-h` avec la hauteur réelle de la topbar (padding +
+  // safe-area compris) pour que le bandeau d'onglets, rendu sticky en CSS,
+  // se cale exactement sous elle (voir .category-tabs). Recalculé au resize
+  // / changement d'orientation (la safe-area peut varier).
+  function syncTopbarHeight() {
+    const topbar = document.querySelector(".topbar");
+    if (topbar) {
+      document.documentElement.style.setProperty("--topbar-h", `${topbar.offsetHeight}px`);
+    }
+  }
+
   document.addEventListener("DOMContentLoaded", () => {
     initSetupScreen();
     initAddPanel();
@@ -3793,6 +3804,10 @@ if (typeof document !== "undefined") {
     document.getElementById("btn-settings").addEventListener("click", () => {
       showScreen("setup-screen");
     });
+
+    syncTopbarHeight();
+    window.addEventListener("resize", syncTopbarHeight);
+    window.addEventListener("orientationchange", syncTopbarHeight);
 
     boot();
 
