@@ -2018,7 +2018,11 @@ function updateSeasonActionsVisibility(item) {
     ? Array.isArray(item.tmdb_seasons) && item.tmdb_seasons.length >= 2
     : Array.isArray(item.anilist_seasons) && item.anilist_seasons.length >= 2;
   removeBtn.classList.toggle("hidden", !hasMultipleSeasons);
-  removeBtn.textContent = isFilm ? "🗑 Retirer le dernier film" : "🗑 Retirer la dernière saison";
+  // Même picto poubelle que les cartes (voir .btn-trash-ico) plutôt que
+  // l'emoji, pour un rendu identique sur toutes les plateformes.
+  removeBtn.innerHTML = `<img class="btn-trash-ico" src="icon-trash.png" alt="" /> ${
+    isFilm ? "Retirer le dernier film" : "Retirer la dernière saison"
+  }`;
 }
 
 /** Échange deux entrées adjacentes (voir swapUnwatchedEntries) puis

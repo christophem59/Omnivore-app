@@ -588,17 +588,25 @@ label input {
   position: absolute;
   top: 6px;
   right: 6px;
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   padding: 0;
   border: none;
-  background: url("icon-trash.png") center / 24px 24px no-repeat;
+  background: url("icon-trash.png") center / 28px 28px no-repeat;
   cursor: pointer;
-  opacity: 0.9;
-  transition: opacity 0.15s ease, transform 0.1s ease;
+  opacity: 1;
+  transition: transform 0.1s ease, filter 0.15s ease;
 }
-.card-delete:hover { opacity: 1; }
-.card-delete:active { opacity: 1; transform: scale(0.9); }
+.card-delete:active { transform: scale(0.9); }
+
+/* Petit picto poubelle en préfixe des boutons texte "Retirer…" (modale de
+   détail), pour rester cohérent avec le picto des cartes. */
+.btn-trash-ico {
+  width: 16px;
+  height: 16px;
+  vertical-align: -3px;
+  margin-right: 2px;
+}
 
 /* --------- Toast de succès --------- */
 
