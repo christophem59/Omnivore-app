@@ -331,6 +331,8 @@ const STREAMING_ICON_MAP = [
   { match: "hbo", slug: "hbo", color: "8B5CF6" },
   { match: "max", slug: "max", color: "002BE7" },
   { match: "youtube", slug: "youtube", color: "FF0000" },
+  { match: "canal", slug: "canalplus", color: "000000" },
+  { match: "arte", slug: "arte", color: "FF0000" },
 ];
 
 function getStreamingIcon(serviceName) {
@@ -529,6 +531,9 @@ function formatNextEpisodeDate(item, raw) {
  * épisode d'AniList (seul endroit où l'info existe côté API) ; pour les
  * séries TV, TVmaze ne renvoie qu'un seul diffuseur/chaîne pour la fiche. */
 function getSeriesStreamingList(itemType, raw) {
+  if (itemType === "film") {
+    return raw.streamingList || [];
+  }
   if (itemType === "tv") {
     return raw.streaming ? [raw.streaming] : [];
   }
@@ -977,6 +982,44 @@ async function fetchAnimeRaw(item) {
   return raw;
 }
 
+/** Région utilisée pour les services de streaming des films (TMDb renvoie
+ * les providers par pays). L'app est en français, donc France par défaut. */
+const TMDB_REGION = "FR";
+
+/** Extrait la liste des services de streaming (abonnement / gratuit / avec
+ * pub) d'un film TMDb récupéré avec `append_to_response=watch/providers`,
+ * pour la région TMDB_REGION. On ne garde volontairement PAS la location /
+ * l'achat (rent/buy) : l'info recherchée est "où le regarder en streaming".
+ * TMDb impose d'afficher ces données via son attribution (JustWatch) ; ici
+ * on ne montre que le nom des services (pas de lien de deep-link). */
+function extractFilmProviders(movie) {
+  const results = movie && movie["watch/providers"] && movie["watch/providers"].results;
+  const region = results && results[TMDB_REGION];
+  if (!region) return [];
+  const names = [];
+  for (const cat of ["flatrate", "free", "ads"]) {
+    (region[cat] || []).forEach((p) => {
+      if (p && p.provider_name) names.push(p.provider_name);
+    });
+  }
+  return names;
+}
+
+/** Transforme une liste de noms de services en entrées `{name, kind}`
+ * dédupliquées (en préservant l'ordre), au format attendu par
+ * renderStreamingList / getSeriesStreamingList. */
+function dedupeStreaming(names) {
+  const seen = new Set();
+  const out = [];
+  for (const name of names || []) {
+    if (!seen.has(name)) {
+      seen.add(name);
+      out.push({ name, kind: "streaming" });
+    }
+  }
+  return out;
+}
+
 /** Équivalent film de fetchTvRaw/fetchAnimeRaw : renvoie EXACTEMENT la même
  * forme générique ({episodes, streaming, summary, rating}) pour que tout le
  * moteur déjà écrit pour la TV (deriveTvEpisodeInfo, applyEpisodeProgress,
@@ -995,10 +1038,16 @@ async function fetchFilmRaw(item) {
     throw new Error("Clé API TMDb manquante : ajoute-la dans Paramètres.");
   }
 
+  // `append_to_response=watch/providers` : les services de streaming
+  // arrivent dans le même appel que les détails du film (pas de requête
+  // réseau supplémentaire par film).
+  const detailUrl = (id) =>
+    `https://api.themoviedb.org/3/movie/${id}?api_key=${apiKey}&language=fr-FR&append_to_response=watch/providers`;
+
   if (Array.isArray(item.tmdb_seasons) && item.tmdb_seasons.length) {
     const movies = await Promise.all(
       item.tmdb_seasons.map((s) =>
-        fetch(`https://api.themoviedb.org/3/movie/${s.tmdb_id}?api_key=${apiKey}&language=fr-FR`).then((resp) => {
+        fetch(detailUrl(s.tmdb_id)).then((resp) => {
           if (!resp.ok) throw new Error(`TMDb : détails indisponibles pour ${s.search_title || item.display_title}`);
           return resp.json();
         })
@@ -1011,19 +1060,24 @@ async function fetchFilmRaw(item) {
       name: movie.title,
       summary: movie.overview || null,
       rating: typeof movie.vote_average === "number" ? movie.vote_average : null,
+      streamingList: dedupeStreaming(extractFilmProviders(movie)),
     }));
     const last = episodes[episodes.length - 1];
     return {
       episodes,
-      streaming: null, // hors scope pour cette passe, voir le plan
+      streaming: null,
+      // Union (dédupliquée) des services de tous les volets de la
+      // collection — approximation volontaire : "la saga est dispo sur…".
+      streamingList: dedupeStreaming(movies.flatMap((m) => extractFilmProviders(m))),
       summary: (movies[movies.length - 1] && movies[movies.length - 1].overview) || null,
       rating: last ? last.rating : null,
     };
   }
 
-  const resp = await fetch(`https://api.themoviedb.org/3/movie/${item.tmdb_id}?api_key=${apiKey}&language=fr-FR`);
+  const resp = await fetch(detailUrl(item.tmdb_id));
   if (!resp.ok) throw new Error(`TMDb : détails indisponibles pour ${item.display_title}`);
   const movie = await resp.json();
+  const streamingList = dedupeStreaming(extractFilmProviders(movie));
   const episodes = [
     {
       season: 1,
@@ -1032,12 +1086,14 @@ async function fetchFilmRaw(item) {
       name: movie.title,
       summary: movie.overview || null,
       rating: typeof movie.vote_average === "number" ? movie.vote_average : null,
+      streamingList,
     },
   ];
 
   return {
     episodes,
     streaming: null,
+    streamingList,
     summary: movie.overview || null,
     rating: episodes[0].rating,
   };
@@ -2257,6 +2313,16 @@ async function openUpcomingModal(item) {
       return;
     }
     fillEpisodeModalContent(item, info, formatRatingLabel(item.type, raw));
+    // Les films n'ont pas de `info.streaming` (single) : on affiche à la
+    // place la liste des services TMDb récupérée dans `raw` (voir
+    // fetchFilmRaw / getSeriesStreamingList).
+    if (item.type === "film") {
+      renderStreamingList(
+        document.getElementById("episode-modal-streaming"),
+        getSeriesStreamingList("film", raw),
+        formatRatingLabel(item.type, raw)
+      );
+    }
   } catch (e) {
     document.getElementById("episode-modal-airdate").textContent = `Impossible de récupérer les épisodes : ${e.message}`;
   }
