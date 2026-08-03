@@ -2910,6 +2910,57 @@ function showScreen(id) {
   document.getElementById(id).classList.remove("hidden");
 }
 
+/* Bascules d'id AniList programmées : certaines fiches AniList sont
+   remplacées par une autre à une date connue (ex. l'Apothicaire, dont la
+   suite bascule de 176301 vers 195516 à partir du 31/10/2026). Plutôt que
+   d'attendre la date pour éditer la donnée à la main, on code la bascule ici
+   et elle s'applique toute seule le jour venu. En mémoire uniquement et
+   idempotente : rejouée à chaque chargement sans risque ; l'id corrigé se
+   persistera naturellement à la prochaine écriture de watchlist.json. */
+const SCHEDULED_ANILIST_ID_SWAPS = [
+  { from: 176301, to: 195516, since: "2026-10-31" }, // Apothicaire (voir BACKLOG)
+];
+
+function applyScheduledAnilistIdSwaps() {
+  if (!watchlist || !Array.isArray(watchlist.items)) return;
+  const today = todayIso();
+  const active = SCHEDULED_ANILIST_ID_SWAPS.filter((s) => today >= s.since);
+  if (!active.length) return;
+
+  const swapOf = (id) => {
+    const match = active.find((s) => Number(id) === s.from);
+    return match ? match.to : null;
+  };
+
+  const cache = loadEpisodeCache();
+  let cacheDirty = false;
+  for (const item of watchlist.items) {
+    let changed = false;
+    const top = swapOf(item.anilist_id);
+    if (top !== null) {
+      item.anilist_id = top;
+      changed = true;
+    }
+    if (Array.isArray(item.anilist_seasons)) {
+      for (const s of item.anilist_seasons) {
+        const sw = swapOf(s.anilist_id);
+        if (sw !== null) {
+          s.anilist_id = sw;
+          changed = true;
+        }
+      }
+    }
+    // L'id AniList a changé mais le cache épisodes est indexé par item.id :
+    // on le vide pour cet item, sinon on continuerait à servir l'ancienne
+    // fiche jusqu'à expiration du cache.
+    if (changed && cache[item.id]) {
+      delete cache[item.id];
+      cacheDirty = true;
+    }
+  }
+  if (cacheDirty) saveEpisodeCache(cache);
+}
+
 async function loadAll() {
   watchlist = await store.getFile("watchlist.json");
   state = await store.getFile("state.json");
@@ -2918,6 +2969,7 @@ async function loadAll() {
   } catch (e) {
     progress = {};
   }
+  applyScheduledAnilistIdSwaps();
 }
 
 async function boot() {
