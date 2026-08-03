@@ -1,6 +1,6 @@
 // Incrémenter ce numéro à chaque changement du code de l'app force une
 // invalidation propre de l'ancien cache (voir activate ci-dessous).
-const CACHE_NAME = "suivi-shell-v38";
+const CACHE_NAME = "suivi-shell-v39";
 const APP_SHELL = [
   "./",
   "./index.html",
