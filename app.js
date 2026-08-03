@@ -16,6 +16,7 @@ const LS = {
   posterCache: "sv_poster_cache",
   episodeCache: "sv_episode_cache",
   summaryCache: "sv_summary_cache",
+  activeCategory: "sv_active_category",
 };
 
 /* ------------------------- Helpers purs (testables) ------------------------- */
@@ -3560,9 +3561,22 @@ function applyCategoryDefaultOpenState(category) {
 
 function initCategoryTabs() {
   const tabs = document.querySelectorAll(".category-tab");
+
+  // Restaure la dernière catégorie choisie (persistée ci-dessous) pour ne
+  // pas repartir systématiquement sur "Séries" à chaque rechargement de la
+  // page (ex. cmd+maj+R en étant sur "Films"). initCategoryTabs s'exécute
+  // avant boot()/renderAll(), donc activeCategory est déjà à jour au rendu.
+  const stored = localStorage.getItem(LS.activeCategory);
+  if (stored && (isRealCategory(stored) || stored === "manga")) {
+    activeCategory = stored;
+    tabs.forEach((t) => t.classList.toggle("active", t.dataset.category === stored));
+    applyCategoryDefaultOpenState(activeCategory);
+  }
+
   tabs.forEach((tab) => {
     tab.addEventListener("click", () => {
       activeCategory = tab.dataset.category;
+      localStorage.setItem(LS.activeCategory, activeCategory);
       tabs.forEach((t) => t.classList.toggle("active", t === tab));
       applyCategoryDefaultOpenState(activeCategory);
       renderAll();
