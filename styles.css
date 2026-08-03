@@ -709,7 +709,21 @@ button.small-btn.watch-again {
 #episode-modal-streaming {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
+}
+/* Films : deux lignes empilées (streaming inclus / location-achat), chacune
+   occupant toute la largeur. */
+.streaming-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+}
+.streaming-rentbuy {
+  opacity: 0.85;
+  font-size: 0.9rem;
 }
 .streaming-logo {
   height: 22px;

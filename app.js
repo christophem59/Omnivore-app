@@ -986,18 +986,23 @@ async function fetchAnimeRaw(item) {
  * les providers par pays). L'app est en français, donc France par défaut. */
 const TMDB_REGION = "FR";
 
-/** Extrait la liste des services de streaming (abonnement / gratuit / avec
- * pub) d'un film TMDb récupéré avec `append_to_response=watch/providers`,
- * pour la région TMDB_REGION. On ne garde volontairement PAS la location /
- * l'achat (rent/buy) : l'info recherchée est "où le regarder en streaming".
- * TMDb impose d'afficher ces données via son attribution (JustWatch) ; ici
- * on ne montre que le nom des services (pas de lien de deep-link). */
-function extractFilmProviders(movie) {
+/** Catégories TMDb de services : `STREAM_CATS` = compris dans un abonnement
+ * ou gratuit (avec ou sans pub) ; `RENT_BUY_CATS` = à louer / acheter. On
+ * les affiche séparément (voir renderFilmStreaming) pour bien distinguer
+ * "inclus" de "payant à l'acte". */
+const STREAM_CATS = ["flatrate", "free", "ads"];
+const RENT_BUY_CATS = ["rent", "buy"];
+
+/** Extrait les noms de services d'un film TMDb récupéré avec
+ * `append_to_response=watch/providers`, pour la région TMDB_REGION et les
+ * catégories demandées. TMDb tire ces données de JustWatch ; on n'affiche
+ * que le nom des services (pas de deep-link). */
+function extractFilmProviders(movie, cats = STREAM_CATS) {
   const results = movie && movie["watch/providers"] && movie["watch/providers"].results;
   const region = results && results[TMDB_REGION];
   if (!region) return [];
   const names = [];
-  for (const cat of ["flatrate", "free", "ads"]) {
+  for (const cat of cats) {
     (region[cat] || []).forEach((p) => {
       if (p && p.provider_name) names.push(p.provider_name);
     });
@@ -1061,6 +1066,7 @@ async function fetchFilmRaw(item) {
       summary: movie.overview || null,
       rating: typeof movie.vote_average === "number" ? movie.vote_average : null,
       streamingList: dedupeStreaming(extractFilmProviders(movie)),
+      rentBuyList: dedupeStreaming(extractFilmProviders(movie, RENT_BUY_CATS)),
     }));
     const last = episodes[episodes.length - 1];
     return {
@@ -1069,6 +1075,7 @@ async function fetchFilmRaw(item) {
       // Union (dédupliquée) des services de tous les volets de la
       // collection — approximation volontaire : "la saga est dispo sur…".
       streamingList: dedupeStreaming(movies.flatMap((m) => extractFilmProviders(m))),
+      rentBuyList: dedupeStreaming(movies.flatMap((m) => extractFilmProviders(m, RENT_BUY_CATS))),
       summary: (movies[movies.length - 1] && movies[movies.length - 1].overview) || null,
       rating: last ? last.rating : null,
     };
@@ -1078,6 +1085,7 @@ async function fetchFilmRaw(item) {
   if (!resp.ok) throw new Error(`TMDb : détails indisponibles pour ${item.display_title}`);
   const movie = await resp.json();
   const streamingList = dedupeStreaming(extractFilmProviders(movie));
+  const rentBuyList = dedupeStreaming(extractFilmProviders(movie, RENT_BUY_CATS));
   const episodes = [
     {
       season: 1,
@@ -1087,6 +1095,7 @@ async function fetchFilmRaw(item) {
       summary: movie.overview || null,
       rating: typeof movie.vote_average === "number" ? movie.vote_average : null,
       streamingList,
+      rentBuyList,
     },
   ];
 
@@ -1094,6 +1103,7 @@ async function fetchFilmRaw(item) {
     episodes,
     streaming: null,
     streamingList,
+    rentBuyList,
     summary: movie.overview || null,
     rating: episodes[0].rating,
   };
@@ -1946,17 +1956,9 @@ function formatRatingLabel(itemType, raw) {
  * Factorisé pour être réutilisé aussi bien par la modale "prochain épisode"
  * (0 ou 1 service) que par la modale "Terminé" (peut en avoir plusieurs,
  * côté anime). */
-function renderStreamingList(streamingEl, list, ratingLabel) {
-  streamingEl.innerHTML = "";
-  if (!list.length) {
-    streamingEl.appendChild(document.createTextNode("Streaming légal : non disponible"));
-    if (ratingLabel) streamingEl.appendChild(document.createTextNode(` - ${ratingLabel}`));
-    return;
-  }
-
-  const prefix = list.length === 1 && list[0].kind === "broadcast" ? "Diffusé sur : " : "Disponible sur : ";
-  streamingEl.appendChild(document.createTextNode(prefix));
-
+/** Ajoute les logos (ou repli texte) d'une liste de services à un élément,
+ * sans le vider (utilisé par renderStreamingList et renderFilmStreaming). */
+function appendStreamingEntries(target, list) {
   for (const entry of list) {
     const icon = getStreamingIcon(entry.name);
     if (icon) {
@@ -1970,15 +1972,54 @@ function renderStreamingList(streamingEl, list, ratingLabel) {
         fallback.title = entry.name;
         img.replaceWith(fallback);
       };
-      streamingEl.appendChild(img);
+      target.appendChild(img);
     } else {
       const fallback = el("span", "streaming-fallback", entry.name);
       fallback.title = entry.name;
-      streamingEl.appendChild(fallback);
+      target.appendChild(fallback);
     }
   }
+}
 
+function renderStreamingList(streamingEl, list, ratingLabel) {
+  streamingEl.innerHTML = "";
+  if (!list.length) {
+    streamingEl.appendChild(document.createTextNode("Streaming légal : non disponible"));
+    if (ratingLabel) streamingEl.appendChild(document.createTextNode(` - ${ratingLabel}`));
+    return;
+  }
+
+  const prefix = list.length === 1 && list[0].kind === "broadcast" ? "Diffusé sur : " : "Disponible sur : ";
+  streamingEl.appendChild(document.createTextNode(prefix));
+  appendStreamingEntries(streamingEl, list);
   if (ratingLabel) streamingEl.appendChild(document.createTextNode(` - ${ratingLabel}`));
+}
+
+/** Rendu streaming spécifique aux films : deux lignes distinctes —
+ * "Disponible sur :" (abonnement/gratuit, voir STREAM_CATS) et
+ * "Location / achat :" (rent/buy, voir RENT_BUY_CATS) — pour bien séparer
+ * ce qui est inclus de ce qui est payant à l'acte. */
+function renderFilmStreaming(streamingEl, raw, ratingLabel) {
+  streamingEl.innerHTML = "";
+  const stream = raw.streamingList || [];
+  const rentBuy = raw.rentBuyList || [];
+
+  const line1 = el("div", "streaming-line");
+  if (!stream.length) {
+    line1.appendChild(document.createTextNode("Streaming inclus : non disponible"));
+  } else {
+    line1.appendChild(document.createTextNode("Disponible sur : "));
+    appendStreamingEntries(line1, stream);
+  }
+  if (ratingLabel) line1.appendChild(document.createTextNode(` - ${ratingLabel}`));
+  streamingEl.appendChild(line1);
+
+  if (rentBuy.length) {
+    const line2 = el("div", "streaming-line streaming-rentbuy");
+    line2.appendChild(document.createTextNode("Location / achat : "));
+    appendStreamingEntries(line2, rentBuy);
+    streamingEl.appendChild(line2);
+  }
 }
 
 /** Traduit un résumé en anglais (HTML simple) et l'injecte dans la modale
@@ -2314,12 +2355,12 @@ async function openUpcomingModal(item) {
     }
     fillEpisodeModalContent(item, info, formatRatingLabel(item.type, raw));
     // Les films n'ont pas de `info.streaming` (single) : on affiche à la
-    // place la liste des services TMDb récupérée dans `raw` (voir
-    // fetchFilmRaw / getSeriesStreamingList).
+    // place les services TMDb récupérés dans `raw`, en deux lignes
+    // (streaming inclus / location-achat, voir renderFilmStreaming).
     if (item.type === "film") {
-      renderStreamingList(
+      renderFilmStreaming(
         document.getElementById("episode-modal-streaming"),
-        getSeriesStreamingList("film", raw),
+        raw,
         formatRatingLabel(item.type, raw)
       );
     }
@@ -2369,7 +2410,11 @@ async function openFinishedModal(item, stateEntry) {
   try {
     const raw = await fetchRawEpisodeData(item);
     airdateEl.textContent = computeFinishedStatusLabel(item, stateEntry, raw);
-    renderStreamingList(streamingEl, getSeriesStreamingList(item.type, raw), formatRatingLabel(item.type, raw));
+    if (item.type === "film") {
+      renderFilmStreaming(streamingEl, raw, formatRatingLabel(item.type, raw));
+    } else {
+      renderStreamingList(streamingEl, getSeriesStreamingList(item.type, raw), formatRatingLabel(item.type, raw));
+    }
     fillTranslatedSummary(summaryEl, item.type === "anime" ? raw.description : raw.summary);
     const progressEpisode = (progress[item.id] && progress[item.id].episode) || 0;
     fillSeasonsSection(item, raw, progressEpisode, progress[item.id] && progress[item.id].ignored);
