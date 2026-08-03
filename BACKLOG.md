@@ -18,10 +18,7 @@ Rien actuellement.
 - Lecture intégrée via serveur média perso (piste ouverte, sans échéance) : intégration Jellyfin/Plex pour lire depuis Omnivore une bibliothèque **de contenu qu'on possède légalement** (fichiers perso, rips de ses propres Blu-ray/DVD), avec marquage "vu" automatique par scrobbling (webhook Jellyfin ou Trakt). Conditionné au fait d'avoir un jour la motivation de constituer cette bibliothèque numérique. Écarté : capter/agréger des flux de streaming externes (illégal, instable) et les serveurs Jellyfin/Plex "partagés" publics (piratage). Le besoin courant "où regarder" est déjà couvert par l'affichage des services de streaming officiels.
 - Films : services de streaming disponibles (nécessite un appel TMDb par film + gestion de région, volontairement hors scope au premier passage).
 
-### 3. Design
-
-- **Retravailler l'interface pour le mobile (suite)** : cartes + palette traitées (voir "Fait récemment"). Reste à finaliser sur mobile si besoin : panneau d'ajout, modale de détail, écran de réglages.
-- Refonte graphique (suite éventuelle) : la palette dérivée de l'icône est posée. Restent d'éventuels raffinements (typo, espacements, illustrations/vides, animations) selon les retours d'usage.
+_(Section Design vidée : interface mobile et refonte graphique validées — voir "Fait récemment".)_
 
 ## Hors scope pour l'instant
 
