@@ -183,19 +183,19 @@ main { padding: 16px; max-width: 640px; margin: 0 auto; }
   opacity: 0.7;
 }
 
-/* Largeur fixe + contenu centré : que la colonne d'actions ait 1 bouton
-   ("Commencer", "Regarder à nouveau") ou 2 ("✓ Vu" + "✎ Ajuster"), elle
-   occupe toujours le même espace, donc les boutons s'alignent en colonne
-   harmonieuse d'une carte à l'autre plutôt que de se décaler selon le
-   contenu. */
+/* Mobile-first : les actions occupent leur propre ligne, en pleine largeur
+   sous le corps de la carte (voir la grille .card plus bas), pour ne pas
+   comprimer les infos. Les boutons se posent en rangée et passent à la ligne
+   au besoin. Sur écran large, cette colonne reprend une largeur fixe (voir
+   le @media en fin de fichier) pour un alignement régulier d'une carte à
+   l'autre. */
 .card-actions {
+  grid-area: actions;
   display: flex;
   gap: 8px;
-  margin-top: 8px;
   flex-wrap: wrap;
-  justify-content: center;
-  width: 170px;
-  flex-shrink: 0;
+  justify-content: flex-start;
+  align-items: flex-start;
 }
 
 /* Date du prochain épisode (cartes "À jour") : même poids visuel que le
@@ -215,15 +215,26 @@ main { padding: 16px; max-width: 640px; margin: 0 auto; }
   font-size: 0.9rem;
 }
 
+/* Mobile-first : grille à deux zones. Ligne 1 = poster + corps (le corps
+   prend toute la largeur restante, plus de tassement) ; ligne 2 = les
+   actions en pleine largeur. La poubelle est en absolu (coin haut-droit),
+   d'où le padding-right qui lui réserve la place. Sur écran large, on
+   repasse en une seule rangée (voir le @media en fin de fichier). */
 .card {
   position: relative;
-  display: flex;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas:
+    "poster body"
+    "actions actions";
+  column-gap: 12px;
+  row-gap: 10px;
   background: var(--card);
   border: 1px solid var(--card-border);
   border-radius: var(--radius);
   padding: 12px;
-  align-items: center;
+  padding-right: 40px;
+  align-items: start;
   overflow: hidden;
 }
 .card.awaiting-more { border-left: 3px solid var(--accent-2); }
@@ -242,6 +253,7 @@ main { padding: 16px; max-width: 640px; margin: 0 auto; }
 }
 
 .card img.poster {
+  grid-area: poster;
   width: 56px;
   height: 80px;
   object-fit: cover;
@@ -250,7 +262,7 @@ main { padding: 16px; max-width: 640px; margin: 0 auto; }
   flex-shrink: 0;
 }
 
-.card-body { flex: 1; min-width: 0; }
+.card-body { grid-area: body; min-width: 0; }
 .card-title {
   font-weight: 600;
   margin: 0 0 4px;
@@ -543,13 +555,15 @@ label input {
 .status-choice { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
 
 .card-delete {
+  position: absolute;
+  top: 6px;
+  right: 4px;
   background: none;
   border: none;
   color: var(--text-dim);
   font-size: 1.1rem;
   cursor: pointer;
   padding: 4px 8px;
-  align-self: flex-start;
 }
 .card-delete:active { color: #ff6b6f; }
 
@@ -765,4 +779,30 @@ button.small-btn.danger {
 }
 .watched-flash-badge.ignored-flash-badge {
   background: rgba(90, 90, 90, 0.7);
+}
+
+/* --------- Écrans larges : rangée unique --------- */
+/* Mobile-first : la mise en page par défaut (ci-dessus) est celle du
+   mobile — poster + corps sur une ligne, actions en dessous. À partir des
+   écrans un peu larges (petites tablettes et plus), la carte a la place de
+   tout aligner sur une seule rangée : poster | corps | colonne d'actions à
+   largeur fixe | poubelle, comme avant. */
+@media (min-width: 560px) {
+  .card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding-right: 12px;
+  }
+  .episode-card { align-items: flex-start; }
+  .card-body { flex: 1; }
+  .card-actions {
+    width: 170px;
+    flex-shrink: 0;
+    justify-content: center;
+  }
+  .card-delete {
+    position: static;
+    align-self: flex-start;
+  }
 }
