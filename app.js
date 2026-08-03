@@ -1448,7 +1448,7 @@ async function buildShowCard(item) {
   actions.appendChild(startBtn);
   card.appendChild(actions);
 
-  const deleteBtn = el("button", "card-delete", "🗑");
+  const deleteBtn = el("button", "card-delete");
   deleteBtn.title = "Retirer ce titre";
   deleteBtn.addEventListener("click", async (e) => {
     e.stopPropagation();
@@ -1532,7 +1532,7 @@ async function buildFinishedCard(item, raw, reallyFinished) {
   actions.appendChild(watchAgainBtn);
   card.appendChild(actions);
 
-  const deleteBtn = el("button", "card-delete", "🗑");
+  const deleteBtn = el("button", "card-delete");
   deleteBtn.title = "Retirer ce titre";
   deleteBtn.addEventListener("click", async (e) => {
     e.stopPropagation();
@@ -1597,7 +1597,7 @@ async function buildAbandonedCard(item) {
   actions.appendChild(resumeBtn);
   card.appendChild(actions);
 
-  const deleteBtn = el("button", "card-delete", "🗑");
+  const deleteBtn = el("button", "card-delete");
   deleteBtn.title = "Retirer ce titre";
   deleteBtn.addEventListener("click", async (e) => {
     e.stopPropagation();
@@ -1634,7 +1634,7 @@ async function buildEpisodeCard(item) {
     body.appendChild(el("p", "card-title", item.display_title));
     body.appendChild(el("p", "card-sub error-inline", `Impossible de récupérer les épisodes : ${e.message}`));
     card.appendChild(body);
-    const deleteBtn = el("button", "card-delete", "🗑");
+    const deleteBtn = el("button", "card-delete");
     deleteBtn.title = "Retirer ce titre";
     deleteBtn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -1674,7 +1674,7 @@ async function buildEpisodeCard(item) {
     body.appendChild(confirmBtn);
     card.appendChild(body);
 
-    const deleteBtn = el("button", "card-delete", "🗑");
+    const deleteBtn = el("button", "card-delete");
     deleteBtn.title = "Retirer ce titre";
     deleteBtn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -1820,7 +1820,7 @@ async function buildEpisodeCard(item) {
 
   card.appendChild(actions);
 
-  const deleteBtn = el("button", "card-delete", "🗑");
+  const deleteBtn = el("button", "card-delete");
   deleteBtn.title = "Retirer ce titre";
   deleteBtn.addEventListener("click", (e) => {
     e.stopPropagation();

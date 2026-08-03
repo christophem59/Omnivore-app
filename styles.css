@@ -587,15 +587,18 @@ label input {
 .card-delete {
   position: absolute;
   top: 6px;
-  right: 4px;
-  background: none;
+  right: 6px;
+  width: 34px;
+  height: 34px;
+  padding: 0;
   border: none;
-  color: var(--text-dim);
-  font-size: 1.1rem;
+  background: url("icon-trash.png") center / 24px 24px no-repeat;
   cursor: pointer;
-  padding: 4px 8px;
+  opacity: 0.9;
+  transition: opacity 0.15s ease, transform 0.1s ease;
 }
-.card-delete:active { color: #ff6b6f; }
+.card-delete:hover { opacity: 1; }
+.card-delete:active { opacity: 1; transform: scale(0.9); }
 
 /* --------- Toast de succès --------- */
 
