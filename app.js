@@ -1152,20 +1152,43 @@ async function searchAnilistMulti(query) {
     .slice(0, SEARCH_RESULT_LIMIT);
 }
 
+/** Nombre de pages TMDb agrégées par recherche (20 films/page). TMDb classe
+ * `search/movie` par popularité et non par date : se limiter à la page 1
+ * laissait de côté des volets anciens mais pertinents (ex. "Le Retour du
+ * Jedi" sur la requête "Star Wars", noyé sous les séries/LEGO/spin-offs).
+ * On agrège plusieurs pages pour élargir le vivier AVANT le tri par date. */
+const TMDB_SEARCH_PAGES = 3;
+
 /** Recherche TMDb multi-résultats (films). Renvoie la même forme générique
  * déjà consommée telle quelle par le rendu des résultats du panneau
  * d'ajout (title/year/image/status/rating) — voir searchTvmazeMulti /
- * searchAnilistMulti. */
+ * searchAnilistMulti. Agrège jusqu'à TMDB_SEARCH_PAGES pages puis trie par
+ * date : un film ancien mais pertinent (hors du top popularité) remonte. */
 async function searchTmdbMulti(query) {
   const apiKey = getTmdbKey();
   if (!apiKey) return [];
-  const resp = await fetch(
-    `https://api.themoviedb.org/3/search/movie?api_key=${apiKey}&language=fr-FR&query=${encodeURIComponent(query)}`
+  const base = `https://api.themoviedb.org/3/search/movie?api_key=${apiKey}&language=fr-FR&query=${encodeURIComponent(query)}`;
+
+  const first = await fetch(`${base}&page=1`);
+  if (!first.ok) return [];
+  const firstPayload = await first.json();
+
+  // Pages supplémentaires (2..N) récupérées en parallèle, bornées par le
+  // nombre réel de pages annoncé par TMDb.
+  const totalPages = Math.min(firstPayload.total_pages || 1, TMDB_SEARCH_PAGES);
+  const extraPages = [];
+  for (let p = 2; p <= totalPages; p++) extraPages.push(p);
+  const extraPayloads = await Promise.all(
+    extraPages.map((p) =>
+      fetch(`${base}&page=${p}`)
+        .then((r) => (r.ok ? r.json() : { results: [] }))
+        .catch(() => ({ results: [] }))
+    )
   );
-  if (!resp.ok) return [];
-  const payload = await resp.json();
+
+  const rawResults = [firstPayload, ...extraPayloads].flatMap((pl) => pl.results || []);
   const today = new Date().toISOString().slice(0, 10);
-  return (payload.results || [])
+  return rawResults
     .map((m) => ({
       type: "film",
       title: m.title,
