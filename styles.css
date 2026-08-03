@@ -1,26 +1,26 @@
 :root {
   color-scheme: dark;
-  /* Palette dérivée de l'icône de l'app : fond indigo très profond, rouge
-     crimson de la pellicule/cadre en accent, bleu de la lentille en
-     secondaire (badges d'info). */
-  --bg: #0d0b1a;
-  --bg-2: #14122a;
-  --card: #1a1832;
-  --card-2: #211e3d;
-  --card-border: #2c2a4a;
-  --text: #f4f3f9;
-  --text-dim: #9b98b8;
-  --accent: #e21d3c;
-  --accent-deep: #9d152e;
-  --accent-blue: #2f6fd0;
+  /* Palette dérivée de la nouvelle identité (bannière cookie) : fond bleu
+     profond, bleu vif en accent, or/cookie en accent chaud secondaire. */
+  --bg: #0a1d40;
+  --bg-2: #16346e;
+  --card: #13294f;
+  --card-2: #1c3a70;
+  --card-border: #2e5296;
+  --text: #eef4ff;
+  --text-dim: #9fb4d6;
+  --accent: #3b82f6;
+  --accent-deep: #2563eb;
+  --accent-blue: #3b82f6;
+  --gold: #e0a25a;
   --accent-2: #37b24d;
-  --accent-purple: #8b5cf6;
-  --accent-yellow: #eab308;
-  --accent-orange: #f97316;
+  --accent-purple: #a78bfa;
+  --accent-yellow: #fbbf24;
+  --accent-orange: #f59e0b;
   --radius: 14px;
-  /* Lueur rouge discrète (rappel du néon de l'icône) pour les éléments
-     d'accent : bouton principal, FAB, onglet actif. */
-  --glow: 0 0 0 1px rgba(226, 29, 60, 0.35), 0 6px 20px -6px rgba(226, 29, 60, 0.55);
+  /* Lueur bleue discrète pour les éléments d'accent : bouton principal,
+     FAB, onglet actif, carte "En cours". */
+  --glow: 0 0 0 1px rgba(59, 130, 246, 0.4), 0 6px 20px -6px rgba(59, 130, 246, 0.6);
 }
 
 * { box-sizing: border-box; }
@@ -28,7 +28,7 @@
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  background: radial-gradient(120% 80% at 50% -10%, #1b1836 0%, var(--bg) 60%) no-repeat;
+  background: radial-gradient(120% 80% at 50% -10%, #1d417e 0%, var(--bg) 60%) no-repeat;
   background-color: var(--bg);
   background-attachment: fixed;
   color: var(--text);
@@ -44,7 +44,7 @@ body {
   padding-top: max(16px, env(safe-area-inset-top));
   position: sticky;
   top: 0;
-  background: rgba(13, 11, 26, 0.82);
+  background: rgba(10, 29, 64, 0.82);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   z-index: 10;
@@ -66,17 +66,24 @@ body {
   box-shadow: 0 0 0 1px rgba(226, 29, 60, 0.25), 0 4px 12px -2px rgba(226, 29, 60, 0.4);
 }
 
-/* Logo-titre de la topbar (image wordmark complète), aligné à gauche. */
+/* Topbar : cookie mascotte + titre "Omnivore", alignés à gauche. */
 .brand {
   margin: 0;
   display: flex;
   align-items: center;
+  gap: 10px;
   line-height: 0;
 }
-.brand-logo {
+.brand-cookie {
+  width: 40px;
   height: 40px;
+  flex-shrink: 0;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.45));
+}
+.brand-logo {
+  height: 34px;
   width: auto;
-  max-width: 60vw;
+  max-width: 52vw;
   display: block;
   object-fit: contain;
 }
@@ -118,7 +125,7 @@ main { padding: 16px; max-width: 640px; margin: 0 auto; }
   position: sticky;
   top: var(--topbar-h, 64px);
   z-index: 9;
-  background: rgba(13, 11, 26, 0.92);
+  background: rgba(10, 29, 64, 0.92);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
 }
@@ -157,7 +164,7 @@ main { padding: 16px; max-width: 640px; margin: 0 auto; }
 .category-tab.active {
   color: var(--text);
   border-bottom-color: var(--accent);
-  text-shadow: 0 0 12px rgba(226, 29, 60, 0.6);
+  text-shadow: 0 0 12px rgba(59, 130, 246, 0.7);
 }
 .category-tab .tab-soon {
   display: block;
@@ -195,7 +202,7 @@ main { padding: 16px; max-width: 640px; margin: 0 auto; }
 .watchlist-search { margin-bottom: 20px; }
 .watchlist-search input {
   width: 100%;
-  background: #0b0916;
+  background: #0a1730;
   border: 1px solid var(--card-border);
   color: var(--text);
   border-radius: 8px;
@@ -349,7 +356,7 @@ main { padding: 16px; max-width: 640px; margin: 0 auto; }
   border-radius: 999px;
   margin-top: 2px;
 }
-.badge.behind { background: rgba(226,29,60,0.18); color: #ff7a8a; }
+.badge.behind { background: rgba(224,162,90,0.2); color: #ffcf96; }
 .badge.uptodate { background: rgba(46,125,50,0.2); color: #6fd074; }
 .badge.reallyfinished { background: rgba(139,92,246,0.2); color: #c4b5fd; }
 .badge.abandoned-badge { background: rgba(154,154,154,0.2); color: var(--text-dim); }
@@ -366,7 +373,7 @@ main { padding: 16px; max-width: 640px; margin: 0 auto; }
   width: 70px;
   height: 6px;
   flex-shrink: 0;
-  background: #2a2747;
+  background: #22407a;
   border-radius: 999px;
   overflow: hidden;
 }
@@ -398,7 +405,7 @@ main { padding: 16px; max-width: 640px; margin: 0 auto; }
 .progress-row { display: flex; align-items: center; gap: 8px; }
 .progress-row input[type="number"] {
   width: 64px;
-  background: #0b0916;
+  background: #0a1730;
   border: 1px solid var(--card-border);
   color: var(--text);
   border-radius: 8px;
@@ -407,7 +414,7 @@ main { padding: 16px; max-width: 640px; margin: 0 auto; }
 }
 
 button.small-btn {
-  background: #231f42;
+  background: #1c3a70;
   border: 1px solid var(--card-border);
   color: var(--text);
   border-radius: 8px;
@@ -440,7 +447,7 @@ label input {
   display: block;
   width: 100%;
   margin-top: 6px;
-  background: #0b0916;
+  background: #0a1730;
   border: 1px solid var(--card-border);
   color: var(--text);
   border-radius: 8px;
@@ -474,7 +481,7 @@ label input {
   border: none;
   font-size: 1.8rem;
   line-height: 1;
-  box-shadow: 0 0 0 1px rgba(226,29,60,0.4), 0 10px 26px -6px rgba(226,29,60,0.7);
+  box-shadow: 0 0 0 1px rgba(59,130,246,0.45), 0 10px 26px -6px rgba(59,130,246,0.75);
   cursor: pointer;
   z-index: 20;
 }
@@ -501,7 +508,7 @@ label input {
   border-radius: 18px 18px 0 0;
   padding: 16px 16px calc(24px + env(safe-area-inset-bottom, 0px));
   border-top: 1px solid var(--card-border);
-  box-shadow: 0 -10px 40px -10px rgba(226,29,60,0.28);
+  box-shadow: 0 -10px 40px -10px rgba(59,130,246,0.3);
 }
 
 .overlay-header {
@@ -531,7 +538,7 @@ label input {
 .search-row { display: flex; gap: 8px; margin-bottom: 8px; }
 .search-row input {
   flex: 1;
-  background: #0b0916;
+  background: #0a1730;
   border: 1px solid var(--card-border);
   color: var(--text);
   border-radius: 8px;
@@ -815,7 +822,7 @@ button.small-btn.watch-again {
    sur les entrées pas encore vues. */
 .season-reorder { display: inline-flex; gap: 2px; margin-left: auto; }
 button.season-reorder-btn {
-  background: #231f42;
+  background: #1c3a70;
   border: 1px solid var(--card-border);
   color: var(--text);
   border-radius: 6px;
