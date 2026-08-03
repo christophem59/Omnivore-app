@@ -20,7 +20,7 @@ Rien actuellement.
 
 ### 3. Design
 
-- **Retravailler l'interface pour le mobile, en priorité** : c'est là que l'app est principalement utilisée. Repéré concrètement pendant les tests : la colonne d'actions des cartes (boutons) et les badges ("X épisodes restants"...) se réorganisent mal sous ~400px de large.
+- **Retravailler l'interface pour le mobile (suite)** : cartes traitées (voir "Fait récemment"). Reste à passer en revue sur mobile : en-tête/onglets, panneau d'ajout, modale de détail, écran de réglages.
 - Refonte graphique de l'app à partir du design en cours de création suite à l'obtention du logo.
 - Barre de progression (section "En cours") : utiliser toute la largeur disponible plutôt qu'une largeur fixe.
 
@@ -34,6 +34,7 @@ Rien actuellement.
 
 ## Fait récemment
 
+- Cartes responsives mobile-first : sous ~560px, le corps de la carte prend toute la largeur à côté du poster et les boutons d'action passent sur une ligne dédiée en dessous (au lieu d'être tassés dans une colonne fixe de 170px qui écrasait titre/badges/barre de progression). La poubelle passe en coin haut-droit. Au-dessus de 560px, l'ancienne mise en page en une rangée est conservée.
 - Recherche/ajout scopés à la catégorie active : le panneau d'ajout suit désormais l'onglet courant (Séries→série, Animés→anime, Films→film), n'affiche que des résultats de ce type et n'ajoute que dans cette catégorie ; l'ancien sélecteur de type est masqué. La recherche d'ajout dans une collection était déjà scopée par le type de l'item.
 - Persistance de la catégorie active (Séries/Animés/Films/Mangas) au rechargement de la page : un cmd+maj+R conserve l'onglet courant au lieu de repartir sur "Séries".
 - Ajout d'un volet/saison plus ancien dans une collection : suppression de la règle "doit être plus récent" (ex. les premiers Star Wars, absents de la recherche initiale). Le nouvel élément est ajouté en fin de regroupement, l'ordre se règle ensuite à la main via les flèches ▲/▼.
