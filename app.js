@@ -1247,6 +1247,16 @@ function isRealCategory(category) {
   return category === "series" || category === "animes" || category === "films";
 }
 
+/** Type d'item (tv/anime/film) correspondant à une catégorie d'onglet.
+ * Sert à scoper le panneau d'ajout sur la catégorie active : on n'ajoute
+ * que dans la catégorie affichée (voir initAddPanel). Défaut "tv" pour
+ * "series" (et pour toute valeur inattendue). */
+function categoryToAddType(category) {
+  if (category === "animes") return "anime";
+  if (category === "films") return "film";
+  return "tv";
+}
+
 /** Sous-ensemble de la watchlist à afficher pour l'onglet actif. Ne filtre
  * que par `item.type` (tv/anime) : le reste du pipeline de rendu (statuts,
  * sous-groupes, cartes...) est totalement inchangé, juste appliqué à un
@@ -3306,7 +3316,13 @@ function initAddPanel() {
 
   openBtn.addEventListener("click", () => {
     resetPanel();
+    // Scope imposé par l'onglet courant : on ajoute dans la catégorie active
+    // (Séries→tv, Animés→anime, Films→film). Le FAB d'ajout est masqué sur
+    // les catégories sans suivi (voir renderCategoryChrome), donc
+    // categoryToAddType reçoit toujours ici une vraie catégorie.
+    applyType(categoryToAddType(activeCategory));
     overlay.classList.remove("hidden");
+    searchInput.focus();
   });
   closeBtn.addEventListener("click", closePanel);
 
@@ -3332,25 +3348,32 @@ function initAddPanel() {
   });
 
   const enCoursStatusBtn = document.getElementById("status-btn-en-cours");
+  const typeToggle = document.querySelector(".type-toggle");
+  const panelTitle = overlay.querySelector(".overlay-header h2");
 
-  typeButtons.forEach((btn) => {
-    btn.addEventListener("click", () => {
-      typeButtons.forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
-      currentType = btn.dataset.type;
+  // Le type d'ajout est désormais imposé par la catégorie active (voir
+  // openBtn plus bas) : on n'ajoute que dans la catégorie affichée. Le
+  // sélecteur Série/Anime/Film devient donc redondant et est masqué.
+  if (typeToggle) typeToggle.classList.add("hidden");
 
-      // Pas de section "En cours" pour les films (voir le plan) : ce choix
-      // de statut n'a pas de sens à l'ajout, on le masque et on retombe sur
-      // "À regarder" si jamais il était sélectionné.
-      const isFilm = currentType === "film";
-      enCoursStatusBtn.classList.toggle("hidden", isFilm);
-      if (isFilm && currentStatus === "en_cours") {
-        statusButtons.forEach((b) => b.classList.remove("active"));
-        document.querySelector('.status-btn[data-status="a_regarder"]').classList.add("active");
-        currentStatus = "a_regarder";
-      }
-    });
-  });
+  /** Applique un type d'ajout (tv/anime/film) : met à jour l'état interne,
+   * le titre du panneau, et masque le statut "En cours" pour les films
+   * (pas de section "En cours" côté film — voir renderCategoryChrome). */
+  function applyType(type) {
+    currentType = type;
+    typeButtons.forEach((b) => b.classList.toggle("active", b.dataset.type === type));
+
+    const isFilm = type === "film";
+    enCoursStatusBtn.classList.toggle("hidden", isFilm);
+    if (isFilm && currentStatus === "en_cours") {
+      statusButtons.forEach((b) => b.classList.remove("active"));
+      document.querySelector('.status-btn[data-status="a_regarder"]').classList.add("active");
+      currentStatus = "a_regarder";
+    }
+
+    const labels = { tv: "une série", anime: "un anime", film: "un film" };
+    if (panelTitle) panelTitle.textContent = `Ajouter ${labels[type] || "un titre"}`;
+  }
 
   statusButtons.forEach((btn) => {
     btn.addEventListener("click", () => {
