@@ -1072,21 +1072,44 @@ async function getNextEpisodeInfo(item, opts = {}) {
 
 /* ------------------------------ Recherche (ajout de titre) ------------------------------ */
 
+/** Nombre de résultats affichés par recherche (relevé de 8 à 20 pour laisser
+ * remonter des volets plus anciens/moins populaires, ex. les premiers Star
+ * Wars, que l'API ne classe pas dans son top de pertinence). */
+const SEARCH_RESULT_LIMIT = 20;
+
+/** Comparateur de résultats de recherche par année de sortie croissante
+ * (du plus ancien au plus récent) ; les résultats sans année connue sont
+ * renvoyés en fin de liste. Utilisé pour classer par date les résultats de
+ * recherche (panneau d'ajout et mini-recherche d'ajout de saison/film). */
+function compareSearchResultsByYear(a, b) {
+  const ya = parseInt(a.year, 10);
+  const yb = parseInt(b.year, 10);
+  const aMissing = isNaN(ya);
+  const bMissing = isNaN(yb);
+  if (aMissing && bMissing) return 0;
+  if (aMissing) return 1;
+  if (bMissing) return -1;
+  return ya - yb;
+}
+
 /** Recherche TVmaze multi-résultats (contrairement à singlesearch utilisé
  * ailleurs, qui ne renvoie qu'un seul "meilleur" résultat). */
 async function searchTvmazeMulti(query) {
   const resp = await fetch(`https://api.tvmaze.com/search/shows?q=${encodeURIComponent(query)}`);
   if (!resp.ok) return [];
   const data = await resp.json();
-  return data.slice(0, 8).map((entry) => ({
-    type: "tv",
-    title: entry.show.name,
-    search_title: entry.show.name,
-    year: entry.show.premiered ? entry.show.premiered.slice(0, 4) : "",
-    image: entry.show.image ? entry.show.image.medium : null,
-    status: entry.show.status,
-    rating: entry.show.rating && entry.show.rating.average != null ? entry.show.rating.average : null,
-  }));
+  return data
+    .map((entry) => ({
+      type: "tv",
+      title: entry.show.name,
+      search_title: entry.show.name,
+      year: entry.show.premiered ? entry.show.premiered.slice(0, 4) : "",
+      image: entry.show.image ? entry.show.image.medium : null,
+      status: entry.show.status,
+      rating: entry.show.rating && entry.show.rating.average != null ? entry.show.rating.average : null,
+    }))
+    .sort(compareSearchResultsByYear)
+    .slice(0, SEARCH_RESULT_LIMIT);
 }
 
 /** Recherche AniList multi-résultats via Page(media:...), pour laisser
@@ -1094,7 +1117,7 @@ async function searchTvmazeMulti(query) {
 async function searchAnilistMulti(query) {
   const q = `
     query ($search: String) {
-      Page(page: 1, perPage: 8) {
+      Page(page: 1, perPage: 20) {
         media(search: $search, type: ANIME) {
           id
           title { romaji english }
@@ -1114,16 +1137,19 @@ async function searchAnilistMulti(query) {
   if (!resp.ok) return [];
   const payload = await resp.json();
   const list = (payload.data && payload.data.Page && payload.data.Page.media) || [];
-  return list.map((m) => ({
-    type: "anime",
-    title: m.title.romaji || m.title.english,
-    search_title: m.title.romaji || m.title.english,
-    anilist_id: m.id,
-    year: m.seasonYear || "",
-    rating: m.averageScore != null ? m.averageScore : null,
-    image: m.coverImage ? m.coverImage.medium : null,
-    status: m.status,
-  }));
+  return list
+    .map((m) => ({
+      type: "anime",
+      title: m.title.romaji || m.title.english,
+      search_title: m.title.romaji || m.title.english,
+      anilist_id: m.id,
+      year: m.seasonYear || "",
+      rating: m.averageScore != null ? m.averageScore : null,
+      image: m.coverImage ? m.coverImage.medium : null,
+      status: m.status,
+    }))
+    .sort(compareSearchResultsByYear)
+    .slice(0, SEARCH_RESULT_LIMIT);
 }
 
 /** Recherche TMDb multi-résultats (films). Renvoie la même forme générique
@@ -1139,16 +1165,19 @@ async function searchTmdbMulti(query) {
   if (!resp.ok) return [];
   const payload = await resp.json();
   const today = new Date().toISOString().slice(0, 10);
-  return (payload.results || []).slice(0, 8).map((m) => ({
-    type: "film",
-    title: m.title,
-    search_title: m.title,
-    tmdb_id: m.id,
-    year: m.release_date ? m.release_date.slice(0, 4) : "",
-    status: !m.release_date || m.release_date > today ? "À venir" : null,
-    rating: typeof m.vote_average === "number" && m.vote_average > 0 ? m.vote_average : null,
-    image: m.poster_path ? `https://image.tmdb.org/t/p/w200${m.poster_path}` : null,
-  }));
+  return (payload.results || [])
+    .map((m) => ({
+      type: "film",
+      title: m.title,
+      search_title: m.title,
+      tmdb_id: m.id,
+      year: m.release_date ? m.release_date.slice(0, 4) : "",
+      status: !m.release_date || m.release_date > today ? "À venir" : null,
+      rating: typeof m.vote_average === "number" && m.vote_average > 0 ? m.vote_average : null,
+      image: m.poster_path ? `https://image.tmdb.org/t/p/w200${m.poster_path}` : null,
+    }))
+    .sort(compareSearchResultsByYear)
+    .slice(0, SEARCH_RESULT_LIMIT);
 }
 
 /** Note à afficher sous un résultat de recherche (panneau d'ajout / mini-
@@ -2647,13 +2676,13 @@ async function addGroupedFilmItem({ title, films, status }) {
 }
 
 /** Ajoute une nouvelle saison à un item anime existant (simple ou déjà
- * groupé), depuis la modale de détail. N'est appelée qu'après validation
- * (côté UI, voir initEpisodeModal) que la saison choisie est plus récente
- * que la dernière déjà suivie : insérer au milieu décalerait la
- * numérotation continue des saisons suivantes et invaliderait la
- * progression déjà enregistrée (même risque que removeLastSeason évite en
- * sens inverse). Si l'item n'était pas encore groupé, sa propre fiche
- * devient la première saison du regroupement. */
+ * groupé), depuis la modale de détail. La saison est toujours ajoutée en
+ * FIN de regroupement (push), même si elle est plus ancienne que les
+ * précédentes : ajouter en fin préserve la numérotation continue et la
+ * progression déjà enregistrée (une insertion au milieu les décalerait).
+ * L'utilisateur remet ensuite l'ordre voulu à la main via les flèches ▲/▼
+ * (sur la partie non encore vue). Si l'item n'était pas encore groupé, sa
+ * propre fiche devient la première saison du regroupement. */
 async function addSeasonToItem(itemId, seasonResult) {
   const item = watchlist.items.find((i) => i.id === itemId);
   if (!item) return;
@@ -2704,9 +2733,9 @@ async function removeLastSeason(itemId, clampedEpisode) {
 
 /** Équivalent film de addSeasonToItem : ajoute un film à un item déjà
  * groupé (ou initialise le regroupement à partir d'un film simple), depuis
- * la modale de détail. Même règle de validation que pour les saisons anime
- * (voir initEpisodeModal) : le film choisi doit être plus récent que le
- * dernier déjà suivi. */
+ * la modale de détail. Comme pour les saisons anime, le film est ajouté en
+ * FIN de regroupement (push) quel que soit son année de sortie ; l'ordre de
+ * visionnage voulu se règle ensuite à la main via les flèches ▲/▼. */
 async function addFilmToItem(itemId, filmResult) {
   const item = watchlist.items.find((i) => i.id === itemId);
   if (!item) return;
@@ -2998,29 +3027,11 @@ function initEpisodeModal() {
             addBtn.disabled = true; // avant tout await : évite un double-ajout sur double-clic
             addSeasonError.classList.add("hidden");
             try {
-              // Refus explicite plutôt qu'une insertion silencieuse au
-              // milieu : ça décalerait la numérotation continue et
-              // invaliderait la progression déjà enregistrée (voir le
-              // commentaire de addSeasonToItem/addFilmToItem).
-              const raw = await fetchRawEpisodeData(modalItem);
-              let lastYear = null;
-              if (isFilm) {
-                const episodes = raw.episodes || [];
-                const lastAirdate = episodes.length ? episodes[episodes.length - 1].airdate : null;
-                lastYear = lastAirdate ? parseInt(lastAirdate.slice(0, 4), 10) : null;
-              } else {
-                const seasons = raw.seasons || [];
-                lastYear = seasons.length ? parseInt(seasons[seasons.length - 1].year, 10) : null;
-              }
-              const candidateYear = parseInt(r.year, 10);
-              if (lastYear && candidateYear && candidateYear < lastYear) {
-                throw new Error(
-                  isFilm
-                    ? "Ce film doit être plus récent que le dernier déjà suivi."
-                    : "Cette saison doit être plus récente que la dernière saison déjà suivie."
-                );
-              }
-
+              // Le nouvel élément est ajouté en fin de regroupement (push,
+              // voir addSeasonToItem/addFilmToItem), quel que soit son année :
+              // on autorise désormais l'ajout d'un volet/saison plus ancien
+              // (ex. les premiers Star Wars, absents de la recherche initiale)
+              // et l'utilisateur remet l'ordre à la main via les flèches ▲/▼.
               const itemId = modalItem.id;
               if (isFilm) {
                 await addFilmToItem(itemId, r);
