@@ -107,13 +107,28 @@ main { padding: 16px; max-width: 640px; margin: 0 auto; }
   border: none;
   color: var(--text-dim);
   font-family: inherit;
-  font-size: 0.72rem;
+  font-size: 0.85rem;
   font-weight: 600;
   padding: 10px 4px 9px;
   cursor: pointer;
   border-bottom: 3px solid transparent;
 }
-.category-tab .tab-icon { font-size: 1.15rem; line-height: 1; }
+/* Zone d'icône à hauteur fixe : aligne proprement le picto (image) et les
+   emojis des autres onglets sur une même ligne de base. */
+.category-tab .tab-icon {
+  font-size: 1.4rem;
+  line-height: 1;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tab-ico-img {
+  height: 30px;
+  width: auto;
+  display: block;
+  object-fit: contain;
+}
 .category-tab.active {
   color: var(--text);
   border-bottom-color: var(--accent);
