@@ -16,7 +16,6 @@ Rien actuellement.
 
 - Suivi des mangas via MangaDex, progression par chapitre.
 - Lecture intégrée via serveur média perso (piste ouverte, sans échéance) : intégration Jellyfin/Plex pour lire depuis Omnivore une bibliothèque **de contenu qu'on possède légalement** (fichiers perso, rips de ses propres Blu-ray/DVD), avec marquage "vu" automatique par scrobbling (webhook Jellyfin ou Trakt). Conditionné au fait d'avoir un jour la motivation de constituer cette bibliothèque numérique. Écarté : capter/agréger des flux de streaming externes (illégal, instable) et les serveurs Jellyfin/Plex "partagés" publics (piratage). Le besoin courant "où regarder" est déjà couvert par l'affichage des services de streaming officiels.
-- Films : services de streaming disponibles (nécessite un appel TMDb par film + gestion de région, volontairement hors scope au premier passage).
 
 _(Section Design vidée : interface mobile et refonte graphique validées — voir "Fait récemment".)_
 
@@ -26,6 +25,7 @@ _(Section Design vidée : interface mobile et refonte graphique validées — vo
 
 ## Fait récemment
 
+- Services de streaming pour les films : récupérés via TMDb (`watch/providers`, région FR) dans le même appel que les détails du film, affichés dans la modale de détail ("Disponible sur : …") comme pour les séries/animes. Abonnement/gratuit/pub uniquement (location/achat exclus). Pour une collection, union des services de tous les volets. Canal+/Arte ajoutés à la table d'icônes.
 - Pictogrammes custom (indépendants des polices emoji des plateformes) : picto poubelle néon sur les boutons de suppression des cartes + boutons "Retirer la dernière saison/film" de la modale (variante bleue sur le bouton rouge "Supprimer définitivement" pour le contraste) ; pictos custom pour les 4 onglets de catégorie (Séries, Animés, Films, Mangas/Scans) à la place des emojis, avec libellés agrandis (0.72rem → 0.85rem). Détourés sur fond transparent, servis en local + précachés par le service worker.
 - Refonte graphique — palette dérivée de l'icône : fond indigo profond (dégradé) au lieu du gris neutre, rouge crimson en accent (#e21d3c), bleu lentille en secondaire (badges d'info), surfaces de cartes en dégradé, lueur rouge discrète sur carte "En cours"/onglet actif/boutons principaux/FAB, topbar et modales translucides. Uniquement variables `:root` + styles ciblés, logique inchangée. Sauvegarde de l'état précédent sur la branche `sauvegarde-avant-refonte-graphique`.
 - Bascule d'id AniList de l'Apothicaire (176301 → 195516) programmée dans le code : s'applique automatiquement au chargement à partir du 31 octobre 2026, sans intervention manuelle (bascule en mémoire, idempotente ; cache épisodes de l'item invalidé pour re-fetch ; l'id corrigé se persiste à la prochaine écriture). Voir SCHEDULED_ANILIST_ID_SWAPS dans app.js.
