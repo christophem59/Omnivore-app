@@ -1,6 +1,6 @@
 // Incrémenter ce numéro à chaque changement du code de l'app force une
 // invalidation propre de l'ancien cache (voir activate ci-dessous).
-const CACHE_NAME = "suivi-shell-v35";
+const CACHE_NAME = "suivi-shell-v36";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -17,6 +17,7 @@ const APP_SHELL = [
   "./icon-animes.png",
   "./icon-films.png",
   "./icon-mangas.png",
+  "./logo-omnivore.png",
 ];
 
 self.addEventListener("install", (event) => {

@@ -66,6 +66,19 @@ body {
   box-shadow: 0 0 0 1px rgba(226, 29, 60, 0.25), 0 4px 12px -2px rgba(226, 29, 60, 0.4);
 }
 
+/* Logo-titre de la topbar (image wordmark à la place du texte "Omnivore"). */
+.brand {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  line-height: 0;
+}
+.brand-logo {
+  height: 30px;
+  width: auto;
+  display: block;
+}
+
 .topbar-actions { display: flex; gap: 8px; }
 
 .icon-btn {

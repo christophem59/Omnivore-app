@@ -1113,7 +1113,11 @@ async function fetchRawEpisodeData(item, { forceRefresh } = {}) {
   const cache = loadEpisodeCache();
   const cached = cache[item.id];
   if (!forceRefresh && cached && Date.now() - cached.ts < EPISODE_TTL_MS) {
-    return cached.data;
+    // Auto-cicatrisation : une fiche film mise en cache AVANT l'ajout des
+    // services de streaming n'a pas de `streamingList` — on la refetch pour
+    // l'alimenter (sinon il faudrait attendre l'expiration du TTL de 6h).
+    const staleFilm = item.type === "film" && cached.data && cached.data.streamingList === undefined;
+    if (!staleFilm) return cached.data;
   }
   const data =
     item.type === "tv" ? await fetchTvRaw(item) : item.type === "anime" ? await fetchAnimeRaw(item) : await fetchFilmRaw(item);
