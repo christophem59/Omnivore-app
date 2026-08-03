@@ -1098,7 +1098,11 @@ async function searchTvmazeMulti(query) {
   const resp = await fetch(`https://api.tvmaze.com/search/shows?q=${encodeURIComponent(query)}`);
   if (!resp.ok) return [];
   const data = await resp.json();
+  // TVmaze renvoie déjà ses correspondances par pertinence : on garde les
+  // 20 premières (les plus pertinentes) PUIS on les affiche triées par date,
+  // pour ne pas masquer la bonne série derrière de vieux homonymes.
   return data
+    .slice(0, SEARCH_RESULT_LIMIT)
     .map((entry) => ({
       type: "tv",
       title: entry.show.name,
@@ -1108,8 +1112,7 @@ async function searchTvmazeMulti(query) {
       status: entry.show.status,
       rating: entry.show.rating && entry.show.rating.average != null ? entry.show.rating.average : null,
     }))
-    .sort(compareSearchResultsByYear)
-    .slice(0, SEARCH_RESULT_LIMIT);
+    .sort(compareSearchResultsByYear);
 }
 
 /** Recherche AniList multi-résultats via Page(media:...), pour laisser
@@ -1188,7 +1191,16 @@ async function searchTmdbMulti(query) {
 
   const rawResults = [firstPayload, ...extraPayloads].flatMap((pl) => pl.results || []);
   const today = new Date().toISOString().slice(0, 10);
+  // On SÉLECTIONNE par popularité, pas par date : trier tout le vivier par
+  // date ferait remonter les vieux documentaires/spéciaux (making-of 1977,
+  // Holiday Special 1978, docs SPFX…) qui éjectaient les films principaux
+  // (ex. "L'Empire contre-attaque" 1980, "Le Retour du Jedi" 1983) des 20
+  // places affichées. On garde donc les 20 plus populaires (= les films de
+  // la saga), PUIS on les affiche triés par date.
   return rawResults
+    .filter((m) => m && m.id)
+    .sort((a, b) => (b.popularity || 0) - (a.popularity || 0))
+    .slice(0, SEARCH_RESULT_LIMIT)
     .map((m) => ({
       type: "film",
       title: m.title,
@@ -1199,8 +1211,7 @@ async function searchTmdbMulti(query) {
       rating: typeof m.vote_average === "number" && m.vote_average > 0 ? m.vote_average : null,
       image: m.poster_path ? `https://image.tmdb.org/t/p/w200${m.poster_path}` : null,
     }))
-    .sort(compareSearchResultsByYear)
-    .slice(0, SEARCH_RESULT_LIMIT);
+    .sort(compareSearchResultsByYear);
 }
 
 /** Note à afficher sous un résultat de recherche (panneau d'ajout / mini-
@@ -2032,6 +2043,11 @@ async function reorderAndRefresh(item, arrayField, index, watchedBoundary, btn) 
  * swapUnwatchedEntries) — jamais sur ce qui est déjà vu. */
 function fillSeasonsSection(item, raw, progressEpisode, ignoredIndices) {
   const container = document.getElementById("episode-modal-seasons");
+  // Mémoriser quels <details> étaient ouverts avant de tout reconstruire :
+  // sinon un rafraîchissement (notamment un déplacement ▲/▼) referme la
+  // section, obligeant à la rouvrir entre chaque clic. Le nombre et l'ordre
+  // des <details> sont stables sur un réordonnancement, donc l'index suffit.
+  const wasOpen = Array.from(container.querySelectorAll("details.season-detail")).map((d) => d.open);
   container.innerHTML = "";
   const ignoredSet = new Set(ignoredIndices || []);
 
@@ -2161,6 +2177,11 @@ function fillSeasonsSection(item, raw, progressEpisode, ignoredIndices) {
       container.appendChild(details);
     });
   }
+
+  // Restaurer l'état ouvert/fermé mémorisé au début (voir `wasOpen`).
+  Array.from(container.querySelectorAll("details.season-detail")).forEach((d, i) => {
+    if (wasOpen[i]) d.open = true;
+  });
 
   updateSeasonActionsVisibility(item);
 }
