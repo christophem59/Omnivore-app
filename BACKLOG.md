@@ -10,7 +10,6 @@ Rien actuellement.
 
 ### 1. Fonctionnalités transverses
 
-- **[PRIO] Recherche/ajout scopés à la catégorie active** : la recherche ne doit renvoyer que des résultats du type de l'onglet courant et n'ajouter que dans cette catégorie. Ex. sur l'onglet Films → uniquement des films (pas de série ni de manga), et l'ajout se fait dans Films.
 - Vue "cette semaine" façon calendrier.
 
 ### 2. Extension du périmètre
@@ -35,6 +34,7 @@ Rien actuellement.
 
 ## Fait récemment
 
+- Recherche/ajout scopés à la catégorie active : le panneau d'ajout suit désormais l'onglet courant (Séries→série, Animés→anime, Films→film), n'affiche que des résultats de ce type et n'ajoute que dans cette catégorie ; l'ancien sélecteur de type est masqué. La recherche d'ajout dans une collection était déjà scopée par le type de l'item.
 - Persistance de la catégorie active (Séries/Animés/Films/Mangas) au rechargement de la page : un cmd+maj+R conserve l'onglet courant au lieu de repartir sur "Séries".
 - Ajout d'un volet/saison plus ancien dans une collection : suppression de la règle "doit être plus récent" (ex. les premiers Star Wars, absents de la recherche initiale). Le nouvel élément est ajouté en fin de regroupement, l'ordre se règle ensuite à la main via les flèches ▲/▼.
 - Recherche : tri des résultats par date et passage à 20 résultats. Sélection des résultats par popularité (films/TMDb, sur plusieurs pages agrégées) / pertinence (séries) pour éviter que de vieux documentaires/homonymes ne masquent les volets principaux.
