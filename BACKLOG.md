@@ -25,6 +25,7 @@ _(Section Design vidée : interface mobile et refonte graphique validées — vo
 
 ## Fait récemment
 
+- Refonte graphique complète — nouvelle identité "cookie" (bleue) : palette bleu profond + accent bleu vif (#3b82f6) et accent chaud doré (cookie) ; favicon + icônes PWA/maskable = le cookie mordu sur fond bleu ; topbar = cookie mascotte + wordmark "Omnivore" blanc ; icônes des 4 onglets remplacées par les illustrations de l'artwork (détourées, sans le texte, libellé HTML conservé) ; picto poubelle néon rouge conservé (meilleur contraste sur bleu). Assets détourés depuis la bannière fournie. Sauvegarde de l'état précédent sur la branche `sauvegarde-avant-refonte-bleue`. Logique inchangée.
 - Bandeau de catégories rendu collant (sticky) juste sous la topbar : reste affiché au scroll (surtout en PWA installée), fond flouté opaque, position calée sur la hauteur réelle de la topbar (`--topbar-h` mesurée en JS).
 - Logo de titre : remplacement du texte "Omnivore" par le logo wordmark complet (losange-œil + "Omnivore" + baseline "FILMS • SÉRIES • ANIMÉS • MANGAS"), aligné à gauche dans la topbar.
 - Services de streaming pour les films : récupérés via TMDb (`watch/providers`, région FR) dans le même appel que les détails du film, affichés dans la modale de détail sur deux lignes distinctes — "Disponible sur :" (abonnement/gratuit/pub) et "Location / achat :" (à l'acte, ligne atténuée). Pour une collection, union des services de tous les volets. Canal+/Arte ajoutés à la table d'icônes.
