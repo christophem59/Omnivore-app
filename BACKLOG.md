@@ -1,10 +1,10 @@
 # Backlog — Omnivore
 
-_Dernière mise à jour : 2026-07-31_
+_Dernière mise à jour : 2026-08-03_
 
 ## En cours de traitement
 
-Rien actuellement — support des films en cours de test utilisateur réel, retours à venir.
+Rien actuellement.
 
 ## À faire
 
@@ -35,6 +35,10 @@ Rien actuellement — support des films en cours de test utilisateur réel, reto
 
 ## Fait récemment
 
+- Persistance de la catégorie active (Séries/Animés/Films/Mangas) au rechargement de la page : un cmd+maj+R conserve l'onglet courant au lieu de repartir sur "Séries".
+- Ajout d'un volet/saison plus ancien dans une collection : suppression de la règle "doit être plus récent" (ex. les premiers Star Wars, absents de la recherche initiale). Le nouvel élément est ajouté en fin de regroupement, l'ordre se règle ensuite à la main via les flèches ▲/▼.
+- Recherche : tri des résultats par date et passage à 20 résultats. Sélection des résultats par popularité (films/TMDb, sur plusieurs pages agrégées) / pertinence (séries) pour éviter que de vieux documentaires/homonymes ne masquent les volets principaux.
+- La section de détail d'une collection reste ouverte pendant un réordonnancement ▲/▼ (l'état ouvert/fermé des sections est préservé au rafraîchissement).
 - Fermeture du panneau d'ajout au clic extérieur.
 - Affichage spécifique des résultats déjà dans la watchlist.
 - Refonte "En cours" en cartes par épisode avec bouton "✓ Vu", messages de succès, modale de détail.
