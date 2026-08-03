@@ -20,8 +20,8 @@ Rien actuellement.
 
 ### 3. Design
 
-- **Retravailler l'interface pour le mobile (suite)** : cartes traitées (voir "Fait récemment"). Reste à passer en revue sur mobile : en-tête/onglets, panneau d'ajout, modale de détail, écran de réglages.
-- Refonte graphique de l'app à partir du design en cours de création suite à l'obtention du logo.
+- **Retravailler l'interface pour le mobile (suite)** : cartes + palette traitées (voir "Fait récemment"). Reste à finaliser sur mobile si besoin : panneau d'ajout, modale de détail, écran de réglages.
+- Refonte graphique (suite éventuelle) : la palette dérivée de l'icône est posée. Restent d'éventuels raffinements (typo, espacements, illustrations/vides, animations) selon les retours d'usage.
 
 ## Hors scope pour l'instant
 
@@ -29,6 +29,7 @@ Rien actuellement.
 
 ## Fait récemment
 
+- Refonte graphique — palette dérivée de l'icône : fond indigo profond (dégradé) au lieu du gris neutre, rouge crimson en accent (#e21d3c), bleu lentille en secondaire (badges d'info), surfaces de cartes en dégradé, lueur rouge discrète sur carte "En cours"/onglet actif/boutons principaux/FAB, topbar et modales translucides. Uniquement variables `:root` + styles ciblés, logique inchangée. Sauvegarde de l'état précédent sur la branche `sauvegarde-avant-refonte-graphique`.
 - Bascule d'id AniList de l'Apothicaire (176301 → 195516) programmée dans le code : s'applique automatiquement au chargement à partir du 31 octobre 2026, sans intervention manuelle (bascule en mémoire, idempotente ; cache épisodes de l'item invalidé pour re-fetch ; l'id corrigé se persiste à la prochaine écriture). Voir SCHEDULED_ANILIST_ID_SWAPS dans app.js.
 - Cartes responsives mobile-first : sous ~560px, le corps de la carte prend toute la largeur à côté du poster et les boutons d'action passent sur une ligne dédiée en dessous (au lieu d'être tassés dans une colonne fixe de 170px qui écrasait titre/badges/barre de progression). La poubelle passe en coin haut-droit. Au-dessus de 560px, l'ancienne mise en page en une rangée est conservée.
 - Recherche/ajout scopés à la catégorie active : le panneau d'ajout suit désormais l'onglet courant (Séries→série, Animés→anime, Films→film), n'affiche que des résultats de ce type et n'ajoute que dans cette catégorie ; l'ancien sélecteur de type est masqué. La recherche d'ajout dans une collection était déjà scopée par le type de l'item.
