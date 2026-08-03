@@ -22,18 +22,14 @@ Rien actuellement.
 
 - **Retravailler l'interface pour le mobile (suite)** : cartes traitées (voir "Fait récemment"). Reste à passer en revue sur mobile : en-tête/onglets, panneau d'ajout, modale de détail, écran de réglages.
 - Refonte graphique de l'app à partir du design en cours de création suite à l'obtention du logo.
-- Barre de progression (section "En cours") : utiliser toute la largeur disponible plutôt qu'une largeur fixe.
 
 ## Hors scope pour l'instant
 
 - Notifications push natives (Discord reste le canal).
 
-## Rappel
-
-- Remplacer l'anilist_id de l'Apothicaire (176301 → 195516) à partir du 31 octobre 2026.
-
 ## Fait récemment
 
+- Bascule d'id AniList de l'Apothicaire (176301 → 195516) programmée dans le code : s'applique automatiquement au chargement à partir du 31 octobre 2026, sans intervention manuelle (bascule en mémoire, idempotente ; cache épisodes de l'item invalidé pour re-fetch ; l'id corrigé se persiste à la prochaine écriture). Voir SCHEDULED_ANILIST_ID_SWAPS dans app.js.
 - Cartes responsives mobile-first : sous ~560px, le corps de la carte prend toute la largeur à côté du poster et les boutons d'action passent sur une ligne dédiée en dessous (au lieu d'être tassés dans une colonne fixe de 170px qui écrasait titre/badges/barre de progression). La poubelle passe en coin haut-droit. Au-dessus de 560px, l'ancienne mise en page en une rangée est conservée.
 - Recherche/ajout scopés à la catégorie active : le panneau d'ajout suit désormais l'onglet courant (Séries→série, Animés→anime, Films→film), n'affiche que des résultats de ce type et n'ajoute que dans cette catégorie ; l'ancien sélecteur de type est masqué. La recherche d'ajout dans une collection était déjà scopée par le type de l'item.
 - Persistance de la catégorie active (Séries/Animés/Films/Mangas) au rechargement de la page : un cmd+maj+R conserve l'onglet courant au lieu de repartir sur "Séries".
