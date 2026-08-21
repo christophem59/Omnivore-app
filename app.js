@@ -2555,6 +2555,7 @@ async function autoPromoteUpToDateItems(items) {
       showToast(`${promotedToARegarder.length} films ont un nouveau volet disponible et repassent en "À regarder" !`);
     }
   }
+  return promoted.length > 0;
 }
 
 /** Fait basculer en "Terminé" / "À jour" les titres dont le prochain
@@ -2586,7 +2587,7 @@ async function autoDemoteWaitingItems(items) {
   const toFinish = infos
     .filter(({ info }) => info && info.kind === "episode" && !info.unknown && !info.hasAired)
     .map(({ item }) => item);
-  if (!toFinish.length) return;
+  if (!toFinish.length) return false;
 
   // Même effet que markFinished (statut + historique), mais groupé en une
   // seule écriture watchlist.json au lieu d'une par titre.
@@ -2600,33 +2601,49 @@ async function autoDemoteWaitingItems(items) {
     watchlist,
     `Statut -> terminé (auto, prochain épisode pas encore diffusé) : ${toFinish.map((i) => i.id).join(", ")}`
   );
+  return true;
 }
 
 async function renderAll() {
-  // Bascules de statut automatiques : sur TOUTE la watchlist, quel que soit
-  // l'onglet de catégorie affiché à l'instant — sinon un titre d'une
-  // catégorie non affichée ne serait jamais re-vérifié tant qu'on ne
-  // rouvre pas son onglet.
+  renderCategoryChrome();
+
+  // --- Phase 1 : rendu PRIORITAIRE de "En cours" ---
+  // On affiche tout de suite la section "En cours" à partir des statuts
+  // actuels (avant les bascules auto), car c'est ce qu'on regarde en premier.
+  // Les fetchs faits ici réchauffent le cache épisodes pour la phase 2.
+  if (isRealCategory(activeCategory)) {
+    const gNow = groupByStatus(itemsForActiveCategory());
+    await renderList("list-en-cours", gNow.en_cours, buildEpisodeCard);
+    setSectionCount("count-en-cours", gNow.en_cours.length);
+    applyWatchlistSearch();
+  }
+
+  // --- Phase 2 : bascules de statut automatiques (en arrière-plan) ---
+  // Sur TOUTE la watchlist, quel que soit l'onglet affiché — sinon un titre
+  // d'une catégorie non affichée ne serait jamais re-vérifié. Se déroule
+  // APRÈS le premier affichage de "En cours".
   const initialGroups = groupByStatus(watchlist.items);
-  // Films entamés dans "À regarder" (au moins un volet vu) : pas de section
-  // "En cours" pour ce type, donc à vérifier ici en plus du panier "En
-  // cours" (voir le commentaire d'autoDemoteWaitingItems).
+  // Films entamés dans "À regarder" : pas de section "En cours" pour ce type,
+  // donc à vérifier ici en plus du panier "En cours".
   const startedFilmsAwaitingNext = initialGroups.a_regarder.filter(
     (item) => item.type === "film" && progress[item.id] && progress[item.id].episode > 0
   );
-  await autoDemoteWaitingItems(initialGroups.en_cours.concat(startedFilmsAwaitingNext));
-  await autoPromoteUpToDateItems(initialGroups.termine);
+  const demoted = await autoDemoteWaitingItems(initialGroups.en_cours.concat(startedFilmsAwaitingNext));
+  const promoted = await autoPromoteUpToDateItems(initialGroups.termine);
 
-  renderCategoryChrome();
+  renderCategoryChrome(); // les statuts ont pu changer
   if (!isRealCategory(activeCategory)) {
     return; // Films / Mangas-Scans : pas encore de suivi, le message "Bientôt" suffit
   }
 
-  // Regroupe à nouveau après d'éventuelles promotions/rétrogradations, pour
-  // que les items concernés apparaissent dans la bonne section dès ce
-  // rendu — mais scopé à l'onglet actif seulement (voir itemsForActiveCategory).
+  // --- Phase 3 : rendu complet du reste + réconciliation ---
   const groups = groupByStatus(itemsForActiveCategory());
-  await renderList("list-en-cours", groups.en_cours, buildEpisodeCard);
+  // On ne reconstruit "En cours" que si les bascules ont réellement changé
+  // quelque chose (sinon le rendu de la phase 1 reste valable -> pas de
+  // flicker).
+  if (demoted || promoted) {
+    await renderList("list-en-cours", groups.en_cours, buildEpisodeCard);
+  }
   setSectionCount("count-en-cours", groups.en_cours.length);
   await renderList("list-a-regarder", groups.a_regarder, buildShowCard);
   setSectionCount("count-a-regarder", groups.a_regarder.length);
@@ -2634,8 +2651,7 @@ async function renderAll() {
   setSectionCount("count-termine", groups.termine.length);
 
   // Ré-applique la recherche en cours (si l'utilisateur a déjà tapé quelque
-  // chose) sur les cartes fraîchement reconstruites, sinon un renderAll()
-  // déclenché entre-temps (✓ Vu, bascule auto...) ferait réapparaître tout.
+  // chose) sur les cartes fraîchement reconstruites.
   applyWatchlistSearch();
 }
 
