@@ -670,21 +670,40 @@ class GitHubStore {
     return JSON.parse(text);
   }
 
-  async putFile(path, obj, message) {
-    const sha = this._shas[path];
+  async putFile(path, obj, message, _attempt = 0) {
     const url = `https://api.github.com/repos/${this.owner}/${this.repo}/contents/${path}`;
     const content = b64EncodeUnicode(JSON.stringify(obj, null, 2) + "\n");
+    const body = { message, content, branch: this.branch };
+    // SHA connu -> mise à jour ; SHA inconnu -> création (on omet le champ).
+    if (this._shas[path]) body.sha = this._shas[path];
+
     const resp = await fetch(url, {
       method: "PUT",
       headers: { ...this._headers(), "Content-Type": "application/json" },
-      body: JSON.stringify({ message, content, sha, branch: this.branch }),
+      body: JSON.stringify(body),
     });
-    if (!resp.ok) {
-      const body = await resp.text();
-      throw new Error(`Erreur GitHub (${resp.status}) en écrivant ${path} : ${body.slice(0, 200)}`);
+
+    if (resp.ok) {
+      const data = await resp.json();
+      this._shas[path] = data.content.sha;
+      return;
     }
-    const data = await resp.json();
-    this._shas[path] = data.content.sha;
+
+    // Conflit / SHA périmé ou manquant (écritures concurrentes : épinglage
+    // d'ids par les cartes, progression...) : on rafraîchit le SHA courant
+    // depuis GitHub puis on réessaie. Toutes les écritures sérialisent le
+    // même objet en mémoire (dernier état complet), donc pas de perte.
+    if ((resp.status === 409 || resp.status === 422) && _attempt < 3) {
+      try {
+        await this.getFile(path); // met à jour this._shas[path]
+      } catch {
+        delete this._shas[path]; // fichier absent -> prochaine tentative en création
+      }
+      return this.putFile(path, obj, message, _attempt + 1);
+    }
+
+    const bodyText = await resp.text();
+    throw new Error(`Erreur GitHub (${resp.status}) en écrivant ${path} : ${bodyText.slice(0, 200)}`);
   }
 }
 
@@ -2814,7 +2833,8 @@ async function renderListsOnly() {
 /** Échec d'une écriture optimiste (✓ Vu / Ignoré) : on prévient et on
  * resynchronise depuis GitHub (source de vérité) pour annuler l'affichage
  * optimiste s'il n'a pas été enregistré. */
-function onEpisodeWriteError() {
+function onEpisodeWriteError(e) {
+  console.error("Échec d'enregistrement (progression) :", e);
   showToast("⚠ Enregistrement échoué — resynchronisation…");
   boot();
 }
