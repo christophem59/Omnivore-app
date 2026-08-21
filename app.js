@@ -1824,17 +1824,17 @@ async function buildEpisodeCard(item) {
 
   if (!info.unknown) {
     const watchedBtn = el("button", "small-btn primary-inline", "✓ Vu");
-    watchedBtn.addEventListener("click", async (e) => {
+    watchedBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       watchedBtn.disabled = true;
-      try {
-        // En parallèle plutôt qu'en séquence : l'animation ne doit pas
-        // retarder la mise à jour du numéro d'épisode affiché.
-        await Promise.all([flashWatched(card), markEpisodeWatched(item)]);
-      } catch (err) {
+      // Flash de confirmation NON bloquant + MAJ optimiste immédiate : le
+      // changement d'épisode n'attend plus la fin de l'animation ni l'écriture
+      // réseau (voir markEpisodeWatched).
+      flashWatched(card);
+      markEpisodeWatched(item).catch((err) => {
         alert(err.message);
         watchedBtn.disabled = false;
-      }
+      });
     });
     actions.appendChild(watchedBtn);
 
@@ -1842,15 +1842,14 @@ async function buildEpisodeCard(item) {
     // (épisode spécial qu'on ne regarde pas, par exemple) — voir ignoreEpisode.
     const ignoreBtn = el("button", "small-btn", "Ignoré");
     ignoreBtn.title = "Passer cet épisode sans le marquer comme vu (ex. épisode spécial)";
-    ignoreBtn.addEventListener("click", async (e) => {
+    ignoreBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       ignoreBtn.disabled = true;
-      try {
-        await Promise.all([flashWatched(card, "ignored"), ignoreEpisode(item)]);
-      } catch (err) {
+      flashWatched(card, "ignored");
+      ignoreEpisode(item).catch((err) => {
         alert(err.message);
         ignoreBtn.disabled = false;
-      }
+      });
     });
     actions.appendChild(ignoreBtn);
   }
@@ -2742,36 +2741,82 @@ async function watchAgain(itemId) {
  * ajustement manuel du numéro d'épisode (ex. "180" pour une série qui en
  * compte exactement 180 : la carte doit basculer en "Terminé" tout
  * autant que si on avait cliqué "✓ Vu" jusqu'au bout). */
-async function applyEpisodeProgress(item, newEpisode, raw, { ignoreIndex } = {}) {
+/** Applique LOCALEMENT (sans réseau) la nouvelle progression et l'éventuel
+ * passage en "Terminé"/"À jour", et affiche le toast adéquat. Renvoie true
+ * si le statut a changé (donc watchlist.json est à persister). Séparé de la
+ * persistance pour permettre un rendu optimiste immédiat (voir
+ * markEpisodeWatched / ignoreEpisode). */
+function applyEpisodeProgressLocal(item, newEpisode, raw, { ignoreIndex } = {}) {
   // Liste des épisodes passés via "Ignoré" plutôt que "✓ Vu" (voir
-  // ignoreEpisode) : préservée d'un appel à l'autre plutôt qu'écrasée, pour
-  // que fillSeasonsSection continue à ne pas les compter comme vus même
-  // après un ajustement manuel ultérieur du numéro d'épisode.
+  // ignoreEpisode) : préservée d'un appel à l'autre plutôt qu'écrasée.
   const previousIgnored = (progress[item.id] && progress[item.id].ignored) || [];
   const ignored = ignoreIndex != null ? [...previousIgnored, ignoreIndex] : previousIgnored;
   progress[item.id] = ignored.length ? { episode: newEpisode, ignored } : { episode: newEpisode };
-  await store.putFile(
-    "progress.json",
-    progress,
-    `Progression : ${item.id} -> épisode ${newEpisode}${ignoreIndex != null ? " (ignoré)" : ""}`
-  );
 
   const info =
     item.type !== "anime"
       ? deriveTvEpisodeInfo(raw, newEpisode, new Date().toISOString().slice(0, 10))
       : deriveAnimeEpisodeInfo(raw, newEpisode, Date.now() / 1000);
 
-  if (info.kind === "finished") {
-    await markFinished(item.id);
-    showFinishedStatusToast(item, raw);
-  } else if (!info.hasAired) {
-    // Le passage effectif en "Terminé" / "À jour" est fait par
-    // autoDemoteWaitingItems, appelé par le renderAll() qui suit toujours
-    // cet appel (voir markEpisodeWatched / le bouton "✎ Ajuster") : pas de
-    // markFinished ici pour éviter un double enregistrement dans
-    // finished_history.
-    showToast(`Vous êtes à jour sur "${item.display_title}", la suite arrive !`);
+  if (info.kind === "finished" || !info.hasAired) {
+    // Plus rien à regarder maintenant -> "Terminé" (réellement fini) ou
+    // "À jour (suite à venir)". Même effet que markFinished /
+    // autoDemoteWaitingItems, appliqué ici pour un rendu optimiste immédiat
+    // (une seule entrée dans finished_history, pas de double).
+    item.status = "termine";
+    item.finished_history = [...getFinishedHistory(item), todayIso()];
+    delete item.finished_at;
+    if (info.kind === "finished") showFinishedStatusToast(item, raw);
+    else showToast(`Vous êtes à jour sur "${item.display_title}", la suite arrive !`);
+    return true;
   }
+  return false;
+}
+
+/** Persiste sur GitHub les fichiers modifiés par applyEpisodeProgressLocal
+ * (progression + watchlist si le statut a changé). */
+async function persistEpisodeProgress(item, newEpisode, changedWatchlist, { ignoreIndex } = {}) {
+  await store.putFile(
+    "progress.json",
+    progress,
+    `Progression : ${item.id} -> épisode ${newEpisode}${ignoreIndex != null ? " (ignoré)" : ""}`
+  );
+  if (changedWatchlist) {
+    await store.putFile("watchlist.json", watchlist, `Statut : ${item.id} -> terminé`);
+  }
+}
+
+/** Version bloquante (local puis persistance attendue) — utilisée par le
+ * bouton "✎ Ajuster", non critique en latence. */
+async function applyEpisodeProgress(item, newEpisode, raw, opts = {}) {
+  const changed = applyEpisodeProgressLocal(item, newEpisode, raw, opts);
+  await persistEpisodeProgress(item, newEpisode, changed, opts);
+}
+
+/** Rendu "listes seulement" : re-groupe et re-rend les sections depuis
+ * l'état LOCAL, sans lancer les bascules automatiques (autoDemote/
+ * autoPromote) — donc sans aucune écriture réseau. Sert au rendu optimiste
+ * d'une action ponctuelle (✓ Vu / Ignoré), où la seule bascule concernée a
+ * déjà été appliquée localement. */
+async function renderListsOnly() {
+  renderCategoryChrome();
+  if (!isRealCategory(activeCategory)) return;
+  const groups = groupByStatus(itemsForActiveCategory());
+  await renderList("list-en-cours", groups.en_cours, buildEpisodeCard);
+  setSectionCount("count-en-cours", groups.en_cours.length);
+  await renderList("list-a-regarder", groups.a_regarder, buildShowCard);
+  setSectionCount("count-a-regarder", groups.a_regarder.length);
+  await renderFinishedGroups(groups.termine);
+  setSectionCount("count-termine", groups.termine.length);
+  applyWatchlistSearch();
+}
+
+/** Échec d'une écriture optimiste (✓ Vu / Ignoré) : on prévient et on
+ * resynchronise depuis GitHub (source de vérité) pour annuler l'affichage
+ * optimiste s'il n'a pas été enregistré. */
+function onEpisodeWriteError() {
+  showToast("⚠ Enregistrement échoué — resynchronisation…");
+  boot();
 }
 
 /** Marque l'épisode actuellement affiché comme vu (bouton "✓ Vu" de la
@@ -2779,8 +2824,11 @@ async function applyEpisodeProgress(item, newEpisode, raw, { ignoreIndex } = {})
 async function markEpisodeWatched(item) {
   const raw = await fetchRawEpisodeData(item); // pas de refetch réseau : la donnée brute ne dépend pas de la progression
   const newEpisode = ((progress[item.id] && progress[item.id].episode) || 0) + 1;
-  await applyEpisodeProgress(item, newEpisode, raw);
-  await renderAll();
+  // Optimiste : MAJ locale + rendu immédiat (l'épisode change tout de suite),
+  // puis persistance GitHub en arrière-plan (ne bloque pas l'affichage).
+  const changed = applyEpisodeProgressLocal(item, newEpisode, raw);
+  await renderListsOnly();
+  persistEpisodeProgress(item, newEpisode, changed).catch(onEpisodeWriteError);
 }
 
 /** Ignore l'épisode actuellement affiché (bouton "Ignoré" de la carte
@@ -2794,8 +2842,10 @@ async function ignoreEpisode(item) {
   const raw = await fetchRawEpisodeData(item);
   const currentIndex = (progress[item.id] && progress[item.id].episode) || 0;
   const newEpisode = currentIndex + 1;
-  await applyEpisodeProgress(item, newEpisode, raw, { ignoreIndex: currentIndex });
-  await renderAll();
+  // Optimiste, comme markEpisodeWatched.
+  const changed = applyEpisodeProgressLocal(item, newEpisode, raw, { ignoreIndex: currentIndex });
+  await renderListsOnly();
+  persistEpisodeProgress(item, newEpisode, changed, { ignoreIndex: currentIndex }).catch(onEpisodeWriteError);
 }
 
 /** Ajoute un nouveau titre à la watchlist (résultat de recherche + statut
