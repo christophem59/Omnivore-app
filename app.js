@@ -2069,13 +2069,26 @@ function fillTranslatedSummary(summaryEl, rawSummary) {
   }
   summaryEl.textContent = "Traduction…";
   summaryEl.classList.remove("hidden");
+
+  // SÉCURITÉ (anti-XSS) : les résumés viennent d'API tierces (TVmaze renvoie
+  // du HTML, la traduction est une sortie externe). On ne les injecte JAMAIS
+  // via innerHTML — on retire toutes les balises (stripHtmlToParagraphs) et
+  // on rend le texte pur via textContent. Les sauts de paragraphe sont
+  // conservés par "\n\n" + CSS white-space: pre-line.
+  const renderSafe = (src) => {
+    const paras = stripHtmlToParagraphs(src || "");
+    if (!paras.length) {
+      summaryEl.textContent = "";
+      summaryEl.classList.add("hidden");
+      return;
+    }
+    summaryEl.textContent = paras.join("\n\n");
+    summaryEl.classList.remove("hidden");
+  };
+
   translateToFrench(rawSummary)
-    .then((fr) => {
-      summaryEl.innerHTML = fr;
-    })
-    .catch(() => {
-      summaryEl.innerHTML = rawSummary;
-    });
+    .then((fr) => renderSafe(fr))
+    .catch(() => renderSafe(rawSummary));
 }
 
 /** Remplit la modale de détail avec les infos "prochain épisode" (utilisé

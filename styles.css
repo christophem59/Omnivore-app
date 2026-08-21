@@ -739,6 +739,7 @@ button.small-btn.watch-again {
 }
 .episode-modal-summary {
   margin-top: 8px;
+  white-space: pre-line; /* rend les sauts de paragraphe ("\n\n") du résumé */
 }
 .episode-modal-summary.hidden {
   display: none;
