@@ -313,6 +313,12 @@ main { padding: 16px; max-width: 640px; margin: 0 auto; }
 .card.awaiting-more { border-left: 3px solid var(--accent-2); }
 .card.really-finished { border-left: 3px solid var(--accent-purple); }
 .card.not-started { border-left: 3px solid var(--accent-orange); }
+/* Films "À regarder" : bordure + lueur bleues (comme "En cours" série/anime),
+   l'orange "pas encore commencé" n'ayant pas de sens pour un film. */
+.card.not-started.as-film {
+  border-left-color: var(--accent);
+  box-shadow: inset 3px 0 14px -8px var(--accent);
+}
 
 /* Série abandonnée : volontairement en retrait visuel (grisée, bordure en
    pointillés) pour bien la distinguer des séries "vraiment finies" ou "à

@@ -1452,6 +1452,9 @@ function showFinishedStatusToast(item, raw) {
  * sous-groupe elle va (voir renderFinishedGroups). */
 async function buildShowCard(item) {
   const card = el("div", "card not-started card-clickable");
+  // Les films n'ont pas d'état "en cours" : leur bordure orange "pas encore
+  // commencé" n'a pas de sens -> bordure bleue (comme "En cours" série/anime).
+  if (item.type === "film") card.classList.add("as-film");
   card.addEventListener("click", () => openUpcomingModal(item));
 
   const img = el("img", "poster");
@@ -1468,7 +1471,11 @@ async function buildShowCard(item) {
   // pauseWatching) veut dire que ce n'est pas un premier démarrage : on
   // affiche le dernier épisode regardé plutôt que "Pas encore commencé".
   const watchedCount = (progress[item.id] && progress[item.id].episode) || 0;
-  const subEl = el("p", "card-sub", formatLastWatchedLabel(watchedCount));
+  const subEl = el(
+    "p",
+    "card-sub",
+    item.type === "film" ? "Prochain film…" : formatLastWatchedLabel(watchedCount)
+  );
   body.appendChild(subEl);
 
   if (watchedCount > 0 && item.type === "tv") {
@@ -1485,14 +1492,17 @@ async function buildShowCard(item) {
       .catch(() => {
         // on garde le libellé générique déjà affiché
       });
-  } else if (watchedCount > 0 && item.type === "film") {
-    // Même principe que TV, mais un film se repère par son titre plutôt
-    // que par un numéro (voir formatEpisodeTag).
+  } else if (item.type === "film") {
+    // Pour un film, on indique le PROCHAIN volet à voir (episodes[watchedCount],
+    // le premier non encore vu) plutôt que le dernier vu.
     fetchRawEpisodeData(item)
       .then((raw) => {
-        const ep = raw.episodes && raw.episodes[watchedCount - 1];
-        if (ep) {
-          subEl.textContent = `Dernier film vu : ${ep.name}`;
+        const eps = raw.episodes || [];
+        const next = eps[watchedCount];
+        if (next) {
+          subEl.textContent = `Prochain film : ${next.name}`;
+        } else if (eps.length) {
+          subEl.textContent = `Dernier film : ${eps[eps.length - 1].name}`;
         }
       })
       .catch(() => {
@@ -1520,6 +1530,7 @@ async function buildShowCard(item) {
     startBtn.disabled = true;
     try {
       if (isFilm) {
+        flashConfirm(); // animation de validation, comme le "✓ Vu" des séries
         await markEpisodeWatched(item);
         return; // markEpisodeWatched a déjà déclenché son propre renderAll()
       }
