@@ -2430,9 +2430,10 @@ async function openFinishedModal(item, stateEntry) {
 async function renderList(containerId, items, builder) {
   const container = document.getElementById(containerId);
   container.innerHTML = "";
-  for (const item of items) {
-    container.appendChild(await builder(item));
-  }
+  // Cartes construites en parallèle (chaque builder peut faire un fetch
+  // réseau) puis insérées dans l'ordre d'origine.
+  const cards = await Promise.all(items.map((item) => builder(item)));
+  for (const card of cards) container.appendChild(card);
 }
 
 /** Sépare les items "Terminé" en trois sous-groupes (voir buildFinishedCard
@@ -2501,32 +2502,39 @@ async function autoPromoteUpToDateItems(items) {
   // Pas de section "En cours" pour les films (voir le plan "Support des
   // films") : un nouveau volet sorti les fait revenir en "À regarder",
   // jamais en "En cours" comme pour série/anime.
+  // Évaluation en parallèle (fetch réseau par titre) au lieu d'une boucle
+  // séquentielle. On renvoie l'item à promouvoir (ou null), puis on applique
+  // les changements de statut dans l'ordre d'origine pour des toasts stables.
+  const today = new Date().toISOString().slice(0, 10);
+  const evals = await Promise.all(
+    items.map(async (item) => {
+      if (item.abandoned) return null;
+      let raw;
+      try {
+        raw = await fetchRawEpisodeData(item);
+      } catch {
+        return null;
+      }
+      if (formatSeriesEndDate(item.type, raw) !== null) return null; // réellement fini
+      const progressEpisode = (progress[item.id] && progress[item.id].episode) || 0;
+      const info =
+        item.type !== "anime"
+          ? deriveTvEpisodeInfo(raw, progressEpisode, today)
+          : deriveAnimeEpisodeInfo(raw, progressEpisode, Date.now() / 1000);
+      return info.kind === "episode" && info.hasAired ? item : null;
+    })
+  );
+
   const promotedToEnCours = [];
   const promotedToARegarder = [];
-  for (const item of items) {
-    if (item.abandoned) continue;
-    let raw;
-    try {
-      raw = await fetchRawEpisodeData(item);
-    } catch {
-      continue;
-    }
-    if (formatSeriesEndDate(item.type, raw) !== null) continue; // réellement fini : rien à promouvoir
-
-    const progressEpisode = (progress[item.id] && progress[item.id].episode) || 0;
-    const info =
-      item.type !== "anime"
-        ? deriveTvEpisodeInfo(raw, progressEpisode, new Date().toISOString().slice(0, 10))
-        : deriveAnimeEpisodeInfo(raw, progressEpisode, Date.now() / 1000);
-
-    if (info.kind === "episode" && info.hasAired) {
-      if (item.type === "film") {
-        item.status = "a_regarder";
-        promotedToARegarder.push(item);
-      } else {
-        item.status = "en_cours";
-        promotedToEnCours.push(item);
-      }
+  for (const item of evals) {
+    if (!item) continue;
+    if (item.type === "film") {
+      item.status = "a_regarder";
+      promotedToARegarder.push(item);
+    } else {
+      item.status = "en_cours";
+      promotedToEnCours.push(item);
     }
   }
 
@@ -2566,17 +2574,32 @@ async function autoPromoteUpToDateItems(items) {
  * (déjà annoncé, pas encore sorti) resterait coincée dans "À regarder" au
  * lieu de rejoindre "Terminé"/"À jour". */
 async function autoDemoteWaitingItems(items) {
-  for (const item of items) {
-    let info;
-    try {
-      info = await getNextEpisodeInfo(item);
-    } catch {
-      continue;
-    }
-    if (info.kind === "episode" && !info.unknown && !info.hasAired) {
-      await markFinished(item.id);
-    }
+  // Fetch des infos en parallèle (au lieu d'une boucle séquentielle qui
+  // enchaînait un appel réseau par titre au démarrage).
+  const infos = await Promise.all(
+    items.map((item) =>
+      getNextEpisodeInfo(item)
+        .then((info) => ({ item, info }))
+        .catch(() => ({ item, info: null }))
+    )
+  );
+  const toFinish = infos
+    .filter(({ info }) => info && info.kind === "episode" && !info.unknown && !info.hasAired)
+    .map(({ item }) => item);
+  if (!toFinish.length) return;
+
+  // Même effet que markFinished (statut + historique), mais groupé en une
+  // seule écriture watchlist.json au lieu d'une par titre.
+  for (const item of toFinish) {
+    item.status = "termine";
+    item.finished_history = [...getFinishedHistory(item), todayIso()];
+    delete item.finished_at;
   }
+  await store.putFile(
+    "watchlist.json",
+    watchlist,
+    `Statut -> terminé (auto, prochain épisode pas encore diffusé) : ${toFinish.map((i) => i.id).join(", ")}`
+  );
 }
 
 async function renderAll() {
@@ -3081,13 +3104,17 @@ function applyScheduledAnilistIdSwaps() {
 }
 
 async function loadAll() {
-  watchlist = await store.getFile("watchlist.json");
-  state = await store.getFile("state.json");
-  try {
-    progress = await store.getFile("progress.json");
-  } catch (e) {
-    progress = {};
-  }
+  // Les 3 fichiers sont indépendants : on les récupère en parallèle plutôt
+  // qu'en série (3× la latence réseau à l'ouverture). progress.json peut ne
+  // pas exister encore -> repli sur {} sans faire échouer le reste.
+  const [wl, st, pr] = await Promise.all([
+    store.getFile("watchlist.json"),
+    store.getFile("state.json"),
+    store.getFile("progress.json").catch(() => ({})),
+  ]);
+  watchlist = wl;
+  state = st;
+  progress = pr;
   applyScheduledAnilistIdSwaps();
 }
 
