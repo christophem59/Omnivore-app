@@ -1406,15 +1406,16 @@ function el(tag, className, text) {
  * du toast, qui lui n'apparaît que quand on rattrape/termine une série) :
  * un ✓ vert qui pulse et s'efface, pour rendre visible le fait qu'on vient
  * de valider un épisode même si un autre suit immédiatement derrière. */
-function flashWatched(cardEl, variant) {
-  return new Promise((resolve) => {
-    const badge = document.createElement("div");
-    badge.className = variant === "ignored" ? "watched-flash-badge ignored-flash-badge" : "watched-flash-badge";
-    badge.textContent = variant === "ignored" ? "⏭" : "✓";
-    cardEl.appendChild(badge);
-    cardEl.classList.add(variant === "ignored" ? "ignored-flash" : "watched-flash");
-    setTimeout(resolve, 950);
-  });
+/** Animation de confirmation (✓ vu / ⏭ ignoré) : une pastille qui "pop" au
+ * centre de l'écran. Attachée au <body> (pas à la carte), donc elle survit
+ * au re-rendu optimiste des listes et ne bloque jamais le changement
+ * d'épisode. Non bloquante : lancée puis auto-supprimée. */
+function flashConfirm(variant) {
+  const badge = document.createElement("div");
+  badge.className = variant === "ignored" ? "flash-confirm ignored" : "flash-confirm";
+  badge.textContent = variant === "ignored" ? "⏭" : "✓";
+  document.body.appendChild(badge);
+  setTimeout(() => badge.remove(), 850);
 }
 
 /** Petit message de succès temporaire, en haut de l'écran. */
@@ -1846,10 +1847,10 @@ async function buildEpisodeCard(item) {
     watchedBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       watchedBtn.disabled = true;
-      // Flash de confirmation NON bloquant + MAJ optimiste immédiate : le
-      // changement d'épisode n'attend plus la fin de l'animation ni l'écriture
-      // réseau (voir markEpisodeWatched).
-      flashWatched(card);
+      // Animation de confirmation NON bloquante + MAJ optimiste immédiate :
+      // le changement d'épisode n'attend plus la fin de l'animation ni
+      // l'écriture réseau (voir markEpisodeWatched).
+      flashConfirm();
       markEpisodeWatched(item).catch((err) => {
         alert(err.message);
         watchedBtn.disabled = false;
@@ -1864,7 +1865,7 @@ async function buildEpisodeCard(item) {
     ignoreBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       ignoreBtn.disabled = true;
-      flashWatched(card, "ignored");
+      flashConfirm("ignored");
       ignoreEpisode(item).catch((err) => {
         alert(err.message);
         ignoreBtn.disabled = false;

@@ -910,3 +910,35 @@ button.small-btn.danger {
     align-self: flex-start;
   }
 }
+
+/* --------- Animation de confirmation "✓ vu / ⏭ ignoré" --------- */
+/* Attachée au <body> (voir flashConfirm), superposée au centre, ne bloque
+   rien : le changement d'épisode se fait en dessous, instantanément. */
+.flash-confirm {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  width: 92px;
+  height: 92px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2.9rem;
+  color: #fff;
+  background: rgba(55, 178, 77, 0.94);
+  box-shadow: 0 0 0 8px rgba(55, 178, 77, 0.22), 0 12px 34px -6px rgba(0, 0, 0, 0.55);
+  z-index: 60;
+  pointer-events: none;
+  animation: flash-confirm-pop 0.8s ease-out forwards;
+}
+.flash-confirm.ignored {
+  background: rgba(90, 96, 120, 0.94);
+  box-shadow: 0 0 0 8px rgba(120, 128, 150, 0.22), 0 12px 34px -6px rgba(0, 0, 0, 0.55);
+}
+@keyframes flash-confirm-pop {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
+  22% { opacity: 1; transform: translate(-50%, -50%) scale(1.08); }
+  55% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1); }
+}
