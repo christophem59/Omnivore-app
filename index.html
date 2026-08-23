@@ -3,6 +3,15 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<!-- Content-Security-Policy (défense en profondeur / protection des données) :
+     - script-src 'self' : aucun script externe ni inline -> bloque l'exécution
+       de code injecté (le token GitHub vit dans le localStorage).
+     - connect-src limité aux seules API utilisées -> même si du code hostile
+       s'exécutait, il ne pourrait pas exfiltrer les données vers un autre serveur.
+     - img-src : seuls les CDN d'affiches/logos connus.
+     - object-src 'none' + base-uri 'self' : durcissement.
+     Si un jour une nouvelle API/CDN est ajoutée, penser à l'autoriser ici. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https://image.tmdb.org https://static.tvmaze.com https://s4.anilist.co https://cdn.simpleicons.org; connect-src 'self' https://api.github.com https://api.tvmaze.com https://graphql.anilist.co https://api.themoviedb.org https://api.mymemory.translated.net; font-src 'self'; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
 <meta name="theme-color" content="#0a1d40" />
 <title>Omnivore</title>
 <link rel="manifest" href="manifest.json" />
