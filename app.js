@@ -12,7 +12,7 @@
    un service worker écrit à la main, donc sans bump du cache le nouveau code n'atteint
    jamais les téléphones. La ligne « à propos » affiche AUSSI le cache réellement actif,
    précisément pour que toute dérive entre les deux se voie. */
-const APP_VERSION = "1.3.0";
+const APP_VERSION = "1.4.0";
 
 const LS = {
   owner: "sv_owner",
@@ -780,7 +780,7 @@ async function getPoster(item) {
       if (apiKey) {
         const tmdbId =
           Array.isArray(item.tmdb_seasons) && item.tmdb_seasons.length ? item.tmdb_seasons[0].tmdb_id : item.tmdb_id;
-        const resp = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?api_key=${apiKey}`);
+        const resp = await tmdbFetch(`movie/${tmdbId}`);
         if (resp.ok) {
           const data = await resp.json();
           url = data.poster_path ? `https://image.tmdb.org/t/p/w300${data.poster_path}` : null;
@@ -1066,6 +1066,48 @@ function dedupeStreaming(names) {
  * liste, comme pour les saisons anime. */
 const TMDB_MISSING_KEY_MSG = "Clé API TMDb manquante : ajoute-la dans Paramètres.";
 
+/* TMDb délivre DEUX identifiants sur la même page, et on les confond très facilement :
+     - la clé API v3 : 32 caractères hexadécimaux, passée en paramètre `api_key` ;
+     - le jeton v4 « Read Access Token » : un JWT (commence par `eyJ`, ~200 caractères),
+       qui doit passer en en-tête `Authorization: Bearer` et que TMDb REFUSE en `api_key`
+       avec un 401 « Invalid API key ».
+   Coller le second là où l'app attendait le premier donnait donc un 401 incompréhensible.
+   Plutôt que d'exiger le bon des deux, on accepte les deux et on route correctement. */
+const TMDB_V3_KEY_RE = /^[0-9a-f]{32}$/i;
+
+function isTmdbV4Token(key) {
+  return typeof key === "string" && key.startsWith("eyJ");
+}
+
+/** Décrit ce qui cloche dans une clé TMDb, ou null si sa forme est plausible. */
+function tmdbKeyShapeProblem(key) {
+  if (!key) return null;
+  if (isTmdbV4Token(key) || TMDB_V3_KEY_RE.test(key)) return null;
+  return (
+    `Cette clé TMDb n'a pas une forme attendue (${key.length} caractères). ` +
+    "Une clé API v3 fait 32 caractères hexadécimaux ; un jeton v4 commence par « eyJ ». " +
+    "Vérifie la copie sur themoviedb.org → Paramètres → API."
+  );
+}
+
+/**
+ * Appel TMDb authentifié, quel que soit l'identifiant fourni. `pathAndQuery` est repris
+ * MOT POUR MOT (ex. "movie/123?language=fr-FR&append_to_response=watch/providers") :
+ * cette fonction ne reconstruit pas la requête, elle n'ajoute que l'authentification.
+ * C'est délibéré — passer par URLSearchParams ré-encoderait la barre de
+ * `watch/providers` en %2F et changerait des appels qui fonctionnent aujourd'hui.
+ */
+function tmdbFetch(pathAndQuery) {
+  const key = getTmdbKey();
+  if (!key) throw new Error(TMDB_MISSING_KEY_MSG);
+  const url = `https://api.themoviedb.org/3/${pathAndQuery}`;
+  if (isTmdbV4Token(key)) {
+    return fetch(url, { headers: { Authorization: `Bearer ${key}` } });
+  }
+  const sep = pathAndQuery.includes("?") ? "&" : "?";
+  return fetch(`${url}${sep}api_key=${encodeURIComponent(key)}`);
+}
+
 /** Message d'erreur TMDb lisible : on lit `status_message` quand TMDb le fournit (401
  *  « Invalid API key », 404…), plutôt que de n'afficher qu'un code HTTP nu. */
 async function tmdbErrorMessage(resp) {
@@ -1077,7 +1119,14 @@ async function tmdbErrorMessage(resp) {
     detail = "";
   }
   if (resp.status === 401) {
-    return `Clé API TMDb refusée (401)${detail}. Vérifie-la dans Paramètres.`;
+    const key = getTmdbKey() || "";
+    const forme = tmdbKeyShapeProblem(key);
+    return (
+      `Clé API TMDb refusée (401)${detail}. ` +
+      (forme
+        ? forme
+        : "Elle a la bonne forme : elle a probablement été révoquée ou régénérée sur themoviedb.org → Paramètres → API.")
+    );
   }
   return `TMDb a répondu ${resp.status}${detail}.`;
 }
@@ -1091,13 +1140,13 @@ async function fetchFilmRaw(item) {
   // `append_to_response=watch/providers` : les services de streaming
   // arrivent dans le même appel que les détails du film (pas de requête
   // réseau supplémentaire par film).
-  const detailUrl = (id) =>
-    `https://api.themoviedb.org/3/movie/${id}?api_key=${apiKey}&language=fr-FR&append_to_response=watch/providers`;
+  const detail = (id) =>
+    tmdbFetch(`movie/${id}?language=fr-FR&append_to_response=watch/providers`);
 
   if (Array.isArray(item.tmdb_seasons) && item.tmdb_seasons.length) {
     const movies = await Promise.all(
       item.tmdb_seasons.map((s) =>
-        fetch(detailUrl(s.tmdb_id)).then((resp) => {
+        detail(s.tmdb_id).then((resp) => {
           if (!resp.ok) throw new Error(`TMDb : détails indisponibles pour ${s.search_title || item.display_title}`);
           return resp.json();
         })
@@ -1126,7 +1175,7 @@ async function fetchFilmRaw(item) {
     };
   }
 
-  const resp = await fetch(detailUrl(item.tmdb_id));
+  const resp = await detail(item.tmdb_id);
   if (!resp.ok) throw new Error(`TMDb : détails indisponibles pour ${item.display_title}`);
   const movie = await resp.json();
   const streamingList = dedupeStreaming(extractFilmProviders(movie));
@@ -1289,9 +1338,10 @@ async function searchTmdbMulti(query) {
   // absente ou refusée. On lève désormais : le panneau d'ajout affiche le message tel quel.
   const apiKey = getTmdbKey();
   if (!apiKey) throw new Error(TMDB_MISSING_KEY_MSG);
-  const base = `https://api.themoviedb.org/3/search/movie?api_key=${apiKey}&language=fr-FR&query=${encodeURIComponent(query)}`;
+  const search = (page) =>
+    tmdbFetch(`search/movie?language=fr-FR&query=${encodeURIComponent(query)}&page=${page}`);
 
-  const first = await fetch(`${base}&page=1`);
+  const first = await search(1);
   if (!first.ok) throw new Error(await tmdbErrorMessage(first));
   const firstPayload = await first.json();
 
@@ -1302,7 +1352,7 @@ async function searchTmdbMulti(query) {
   for (let p = 2; p <= totalPages; p++) extraPages.push(p);
   const extraPayloads = await Promise.all(
     extraPages.map((p) =>
-      fetch(`${base}&page=${p}`)
+      search(p)
         .then((r) => (r.ok ? r.json() : { results: [] }))
         .catch(() => ({ results: [] }))
     )
@@ -3378,7 +3428,15 @@ function initSetupScreen() {
     saveConfig({ owner, repo, branch, token });
     // Optionnelle : ne bloque jamais l'enregistrement du reste (voir
     // getTmdbKey/fetchFilmRaw, qui ne l'exige qu'au moment de charger un film).
-    saveTmdbKey(document.getElementById("input-tmdb-key").value.trim());
+    const tmdbKeyValue = document.getElementById("input-tmdb-key").value.trim();
+    saveTmdbKey(tmdbKeyValue);
+    // On prévient TOUT DE SUITE si la forme est douteuse, plutôt que de laisser
+    // découvrir un 401 plus tard au premier film.
+    const forme = tmdbKeyShapeProblem(tmdbKeyValue);
+    if (forme) {
+      errBox.textContent = forme;
+      errBox.classList.remove("hidden");
+    }
     await boot();
   });
 }
