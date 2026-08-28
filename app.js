@@ -12,7 +12,7 @@
    un service worker écrit à la main, donc sans bump du cache le nouveau code n'atteint
    jamais les téléphones. La ligne « à propos » affiche AUSSI le cache réellement actif,
    précisément pour que toute dérive entre les deux se voie. */
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.2.0";
 
 const LS = {
   owner: "sv_owner",
@@ -3169,6 +3169,32 @@ function showScreen(id) {
     s.classList.add("hidden");
   }
   document.getElementById(id).classList.remove("hidden");
+  syncBottomNavVisibility(id);
+}
+
+/**
+ * La navigation par catégorie reste visible sur TOUS les écrans une fois le dépôt
+ * configuré — c'est elle qui permet de sortir des réglages, qui sont un écran et non une
+ * modale. Elle n'est masquée que sur une installation neuve, où elle n'aurait rien à
+ * montrer, et pendant le chargement.
+ */
+function syncBottomNavVisibility(screenId) {
+  const nav = document.getElementById("category-tabs");
+  if (!nav) return;
+  const cfg = getConfig();
+  const configure = Boolean(cfg.owner && cfg.repo && cfg.token);
+  const visible = configure && screenId !== "loading-screen";
+  nav.classList.toggle("hidden", !visible);
+  document.body.classList.toggle("no-bottomnav", !visible);
+  if (visible) syncBottomNavHeight();
+}
+
+/** Renseigne --bottomnav-h avec la hauteur réelle de la barre (safe-area comprise),
+ *  pour que le contenu et le bouton flottant lui laissent exactement la place. */
+function syncBottomNavHeight() {
+  const nav = document.getElementById("category-tabs");
+  if (!nav || nav.classList.contains("hidden")) return;
+  document.documentElement.style.setProperty("--bottomnav-h", `${nav.offsetHeight}px`);
 }
 
 /* Bascules d'id AniList programmées : certaines fiches AniList sont
@@ -3946,6 +3972,10 @@ function initCategoryTabs() {
       localStorage.setItem(LS.activeCategory, activeCategory);
       tabs.forEach((t) => t.classList.toggle("active", t === tab));
       applyCategoryDefaultOpenState(activeCategory);
+      // Depuis les réglages, un onglet ramène à la liste : c'est la seule sortie de cet
+      // écran, qui n'a ni croix ni bouton retour.
+      const main = document.getElementById("main-screen");
+      if (main && main.classList.contains("hidden")) showScreen("main-screen");
       renderAll();
     });
   });
@@ -3954,16 +3984,8 @@ function initCategoryTabs() {
 /* Le bootstrap réel ne s'exécute que dans un navigateur (pas lors des
    tests Node, où `document` n'existe pas). */
 if (typeof document !== "undefined") {
-  // Renseigne `--topbar-h` avec la hauteur réelle de la topbar (padding +
-  // safe-area compris) pour que le bandeau d'onglets, rendu sticky en CSS,
-  // se cale exactement sous elle (voir .category-tabs). Recalculé au resize
-  // / changement d'orientation (la safe-area peut varier).
-  function syncTopbarHeight() {
-    const topbar = document.querySelector(".topbar");
-    if (topbar) {
-      document.documentElement.style.setProperty("--topbar-h", `${topbar.offsetHeight}px`);
-    }
-  }
+  // `--topbar-h` n'a plus de consommateur depuis que le bandeau d'onglets est passé en
+  // bas : c'est désormais --bottomnav-h qui est mesurée (voir syncBottomNavHeight).
 
   document.addEventListener("DOMContentLoaded", () => {
     initSetupScreen();
@@ -3979,9 +4001,9 @@ if (typeof document !== "undefined") {
       void renderAbout();
     });
 
-    syncTopbarHeight();
-    window.addEventListener("resize", syncTopbarHeight);
-    window.addEventListener("orientationchange", syncTopbarHeight);
+    syncBottomNavHeight();
+    window.addEventListener("resize", syncBottomNavHeight);
+    window.addEventListener("orientationchange", syncBottomNavHeight);
 
     boot();
 

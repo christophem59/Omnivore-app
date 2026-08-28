@@ -32,7 +32,9 @@ body {
   background-color: var(--bg);
   background-attachment: fixed;
   color: var(--text);
-  padding-bottom: 40px;
+  /* Réserve la place de la barre de navigation fixe (--bottomnav-h est mesurée en JS,
+     safe-area comprise) pour que le bas des listes reste atteignable. */
+  padding-bottom: calc(var(--bottomnav-h, 64px) + 24px);
   min-height: 100vh;
 }
 
@@ -114,61 +116,71 @@ main { padding: 16px; max-width: 640px; margin: 0 auto; }
 
 /* --------- Onglets de catégorie (Séries/Animés/Films/Mangas-Scans) --------- */
 
-/* Bandeau d'onglets rendu collant juste SOUS la topbar (elle-même sticky
-   top:0). `--topbar-h` est mesurée en JS (hauteur réelle, encoche/safe-area
-   comprise) ; repli à 64px si le JS n'a pas encore tourné. Fond flouté opaque
-   pour masquer le contenu qui défile dessous. */
+/* Navigation principale, collée EN BAS de l'écran. Elle vit hors des écrans (voir
+   index.html) et reste donc visible sur les réglages, qui sont un écran sans autre
+   sortie. `--bottomnav-h` est mesurée en JS (hauteur réelle, safe-area comprise) et sert
+   au contenu et au bouton flottant pour lui laisser la place ; repli à 64px si le JS n'a
+   pas encore tourné. Fond flouté opaque pour masquer le contenu qui défile dessous. */
 .category-tabs {
   display: flex;
-  margin: -16px -16px 16px;
-  border-bottom: 1px solid var(--card-border);
-  position: sticky;
-  top: var(--topbar-h, 64px);
-  z-index: 9;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  /* Sous les overlays (z-index 30) pour ne jamais couvrir une modale, au-dessus du
+     contenu. */
+  z-index: 15;
+  border-top: 1px solid var(--card-border);
   background: rgba(10, 29, 64, 0.92);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
+  /* Barre de navigation gestuelle Android. */
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 .category-tab {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   background: none;
   border: none;
   color: var(--text-dim);
   font-family: inherit;
-  font-size: 0.85rem;
+  font-size: 0.72rem;
   font-weight: 600;
-  padding: 10px 4px 9px;
+  /* Cible tactile ≥ 48 px de haut, marque d'onglet actif passée EN HAUT puisque la
+     barre est désormais collée au bas de l'écran. */
+  min-height: 54px;
+  padding: 6px 2px 4px;
   cursor: pointer;
-  border-bottom: 3px solid transparent;
+  border-top: 3px solid transparent;
 }
 /* Zone d'icône à hauteur fixe : aligne proprement le picto (image) et les
    emojis des autres onglets sur une même ligne de base. */
 .category-tab .tab-icon {
-  font-size: 1.4rem;
+  font-size: 1.2rem;
   line-height: 1;
-  height: 30px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 .tab-ico-img {
-  height: 30px;
+  height: 24px;
   width: auto;
   display: block;
   object-fit: contain;
 }
 .category-tab.active {
   color: var(--text);
-  border-bottom-color: var(--accent);
+  border-top-color: var(--accent);
   text-shadow: 0 0 12px rgba(59, 130, 246, 0.7);
 }
 .category-tab .tab-soon {
   display: block;
-  font-size: 0.6rem;
+  font-size: 0.55rem;
   font-weight: 400;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -478,7 +490,8 @@ label input {
 .fab {
   position: fixed;
   right: 20px;
-  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  /* --bottomnav-h inclut déjà la safe-area (mesure offsetHeight) : ne pas la rajouter. */
+  bottom: calc(var(--bottomnav-h, 64px) + 16px);
   width: 56px;
   height: 56px;
   border-radius: 50%;
@@ -959,3 +972,8 @@ button.small-btn.danger {
   font-size: 12px;
   opacity: 0.7;
 }
+
+/* Première installation : tant que le dépôt n'est pas configuré, la navigation par
+   catégorie n'a rien à montrer — on la masque, et le contenu récupère sa place. */
+.category-tabs.hidden { display: none; }
+body.no-bottomnav { padding-bottom: 40px; }

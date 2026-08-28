@@ -74,21 +74,6 @@
 
     <div id="load-error" class="error hidden"></div>
 
-    <nav class="category-tabs" id="category-tabs">
-      <button type="button" class="category-tab active" data-category="series">
-        <span class="tab-icon"><img class="tab-ico-img" src="icon-series.png?v=4" alt="" /></span>Séries
-      </button>
-      <button type="button" class="category-tab" data-category="animes">
-        <span class="tab-icon"><img class="tab-ico-img" src="icon-animes.png?v=4" alt="" /></span>Animés
-      </button>
-      <button type="button" class="category-tab" data-category="films">
-        <span class="tab-icon"><img class="tab-ico-img" src="icon-films.png?v=4" alt="" /></span>Films
-      </button>
-      <button type="button" class="category-tab" data-category="manga">
-        <span class="tab-icon"><img class="tab-ico-img" src="icon-mangas.png?v=4" alt="" /></span>Mangas/Scans<span class="tab-soon">Bientôt</span>
-      </button>
-    </nav>
-
     <div class="watchlist-search">
       <input type="search" id="watchlist-search-input" placeholder="🔎 Rechercher dans la watchlist…" autocomplete="off" />
     </div>
@@ -130,6 +115,24 @@
   </section>
 
 </main>
+
+<!-- Navigation principale, HORS des écrans : elle reste visible quel que soit l'écran
+     affiché, y compris les réglages. C'est ce qui permet d'en revenir — l'écran de
+     réglages n'est pas une modale et n'avait aucune sortie. -->
+<nav class="category-tabs" id="category-tabs" aria-label="Catégories">
+  <button type="button" class="category-tab active" data-category="series">
+    <span class="tab-icon"><img class="tab-ico-img" src="icon-series.png?v=4" alt="" /></span>Séries
+  </button>
+  <button type="button" class="category-tab" data-category="animes">
+    <span class="tab-icon"><img class="tab-ico-img" src="icon-animes.png?v=4" alt="" /></span>Animés
+  </button>
+  <button type="button" class="category-tab" data-category="films">
+    <span class="tab-icon"><img class="tab-ico-img" src="icon-films.png?v=4" alt="" /></span>Films
+  </button>
+  <button type="button" class="category-tab" data-category="manga">
+    <span class="tab-icon"><img class="tab-ico-img" src="icon-mangas.png?v=4" alt="" /></span>Mangas<span class="tab-soon">Bientôt</span>
+  </button>
+</nav>
 
 <button id="btn-add" class="fab" title="Ajouter un titre">+</button>
 
