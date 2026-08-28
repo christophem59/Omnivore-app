@@ -12,7 +12,7 @@
    un service worker écrit à la main, donc sans bump du cache le nouveau code n'atteint
    jamais les téléphones. La ligne « à propos » affiche AUSSI le cache réellement actif,
    précisément pour que toute dérive entre les deux se voie. */
-const APP_VERSION = "1.2.0";
+const APP_VERSION = "1.3.0";
 
 const LS = {
   owner: "sv_owner",
@@ -1064,10 +1064,28 @@ function dedupeStreaming(names) {
  * détail). L'ordre du tableau fait foi (pas de retri automatique derrière
  * le dos de l'utilisateur) : un nouvel ajout arrive toujours en fin de
  * liste, comme pour les saisons anime. */
+const TMDB_MISSING_KEY_MSG = "Clé API TMDb manquante : ajoute-la dans Paramètres.";
+
+/** Message d'erreur TMDb lisible : on lit `status_message` quand TMDb le fournit (401
+ *  « Invalid API key », 404…), plutôt que de n'afficher qu'un code HTTP nu. */
+async function tmdbErrorMessage(resp) {
+  let detail = "";
+  try {
+    const body = await resp.json();
+    detail = body && body.status_message ? ` — ${body.status_message}` : "";
+  } catch {
+    detail = "";
+  }
+  if (resp.status === 401) {
+    return `Clé API TMDb refusée (401)${detail}. Vérifie-la dans Paramètres.`;
+  }
+  return `TMDb a répondu ${resp.status}${detail}.`;
+}
+
 async function fetchFilmRaw(item) {
   const apiKey = getTmdbKey();
   if (!apiKey) {
-    throw new Error("Clé API TMDb manquante : ajoute-la dans Paramètres.");
+    throw new Error(TMDB_MISSING_KEY_MSG);
   }
 
   // `append_to_response=watch/providers` : les services de streaming
@@ -1266,12 +1284,15 @@ const TMDB_SEARCH_PAGES = 3;
  * searchAnilistMulti. Agrège jusqu'à TMDB_SEARCH_PAGES pages puis trie par
  * date : un film ancien mais pertinent (hors du top popularité) remonte. */
 async function searchTmdbMulti(query) {
+  // Ces deux cas renvoyaient une liste vide, que l'appelant affichait en « Aucun
+  // résultat. » — le message le plus trompeur possible quand la vraie cause est une clé
+  // absente ou refusée. On lève désormais : le panneau d'ajout affiche le message tel quel.
   const apiKey = getTmdbKey();
-  if (!apiKey) return [];
+  if (!apiKey) throw new Error(TMDB_MISSING_KEY_MSG);
   const base = `https://api.themoviedb.org/3/search/movie?api_key=${apiKey}&language=fr-FR&query=${encodeURIComponent(query)}`;
 
   const first = await fetch(`${base}&page=1`);
-  if (!first.ok) return [];
+  if (!first.ok) throw new Error(await tmdbErrorMessage(first));
   const firstPayload = await first.json();
 
   // Pages supplémentaires (2..N) récupérées en parallèle, bornées par le
@@ -1376,6 +1397,19 @@ const CATEGORY_PLACEHOLDER = {
 /** Bascule l'affichage entre les sections habituelles (Séries/Animés) et le
  * message "Bientôt" (Films/Mangas), et masque le bouton flottant d'ajout
  * pour ces deux dernières catégories (rien à y ajouter pour l'instant). */
+/**
+ * Bandeau « clé TMDb manquante » de l'onglet Films.
+ *
+ * Volontairement INDÉPENDANT de renderAll() : celui-ci n'est atteint qu'après un
+ * chargement GitHub réussi, or le bandeau doit s'afficher même quand la watchlist n'a
+ * pas pu être chargée — sinon deux pannes se masquent l'une l'autre.
+ */
+function syncTmdbNotice() {
+  const notice = document.getElementById("tmdb-key-notice");
+  if (!notice) return;
+  notice.classList.toggle("hidden", !(activeCategory === "films" && !getTmdbKey()));
+}
+
 function renderCategoryChrome() {
   const sectionsEl = document.getElementById("category-sections");
   const placeholderEl = document.getElementById("category-placeholder");
@@ -1392,6 +1426,8 @@ function renderCategoryChrome() {
   // les deux — la carte reste dans "À regarder" tant que la collection
   // n'est pas entièrement vue (voir buildShowCard).
   groupEnCours.classList.toggle("hidden", activeCategory === "films");
+
+  syncTmdbNotice();
 
   if (!isReal) {
     const meta = CATEGORY_PLACEHOLDER[activeCategory];
@@ -1513,8 +1549,11 @@ async function buildShowCard(item) {
           subEl.textContent = `Dernier film : ${eps[eps.length - 1].name}`;
         }
       })
-      .catch(() => {
-        // on garde le libellé générique déjà affiché
+      .catch((e) => {
+        // On DIT pourquoi la carte reste incomplète. Avaler l'erreur laissait un
+        // libellé générique et donnait l'impression que l'app « ne marchait plus »,
+        // sans jamais nommer la cause (clé absente, clé refusée, réseau).
+        subEl.textContent = e && e.message ? e.message : "Détails du film indisponibles.";
       });
   }
 
@@ -3284,6 +3323,7 @@ async function boot() {
     const errBox = document.getElementById("load-error");
     errBox.textContent = e.message;
     errBox.classList.remove("hidden");
+    syncTmdbNotice(); // renderAll() n'est pas atteint ici : le bandeau doit rester visible
   }
 }
 
@@ -3976,6 +4016,7 @@ function initCategoryTabs() {
       // écran, qui n'a ni croix ni bouton retour.
       const main = document.getElementById("main-screen");
       if (main && main.classList.contains("hidden")) showScreen("main-screen");
+      syncTmdbNotice();
       renderAll();
     });
   });
@@ -4000,6 +4041,16 @@ if (typeof document !== "undefined") {
       showScreen("setup-screen");
       void renderAbout();
     });
+
+    // Raccourci depuis le bandeau « clé TMDb manquante » de l'onglet Films.
+    const tmdbNoticeBtn = document.getElementById("btn-tmdb-notice-settings");
+    if (tmdbNoticeBtn) {
+      tmdbNoticeBtn.addEventListener("click", () => {
+        showScreen("setup-screen");
+        void renderAbout();
+        document.getElementById("input-tmdb-key").focus();
+      });
+    }
 
     syncBottomNavHeight();
     window.addEventListener("resize", syncBottomNavHeight);

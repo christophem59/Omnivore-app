@@ -74,6 +74,15 @@
 
     <div id="load-error" class="error hidden"></div>
 
+    <!-- Bandeau propre à l'onglet Films : la clé TMDb vit dans le localStorage, donc
+         elle est PERDUE à chaque changement de navigateur. Sans elle, les films
+         échouaient en silence — d'où ce message explicite plutôt qu'une liste vide. -->
+    <div id="tmdb-key-notice" class="tmdb-notice hidden">
+      <strong>Clé API TMDb manquante.</strong>
+      Les films ne peuvent pas être chargés sans elle. Ajoute-la dans
+      <button type="button" id="btn-tmdb-notice-settings" class="link-btn">Paramètres</button>.
+    </div>
+
     <div class="watchlist-search">
       <input type="search" id="watchlist-search-input" placeholder="🔎 Rechercher dans la watchlist…" autocomplete="off" />
     </div>
