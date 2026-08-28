@@ -2,7 +2,12 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<!-- user-scalable=no / maximum-scale=1 : bloque le zoom par pincement et le double tap,
+     pour éviter les zooms accidentels en cours de saisie. Deux réserves assumées :
+      - régression d'accessibilité (WCAG 1.4.4 attend un agrandissement jusqu'à 200 %),
+        acceptable sur une app privée à utilisateurs connus ;
+      - iOS Safari ignore user-scalable=no depuis iOS 10 : ne vaut que sur Android. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
 <!-- Content-Security-Policy (défense en profondeur / protection des données) :
      - script-src 'self' : aucun script externe ni inline -> bloque l'exécution
        de code injecté (le token GitHub vit dans le localStorage).
@@ -58,6 +63,7 @@
     </label>
     <button id="btn-save-setup" class="primary-btn">Enregistrer et charger</button>
     <p id="setup-error" class="error hidden"></p>
+    <p id="about-line" class="hint about-line"></p>
   </section>
 
   <section id="loading-screen" class="screen hidden">

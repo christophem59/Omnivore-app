@@ -7,6 +7,13 @@
    uniquement dans le localStorage du téléphone.
    ========================================================================= */
 
+/* Version de l'app, affichée en bas de l'écran de réglages.
+   À INCRÉMENTER EN MÊME TEMPS que CACHE_NAME dans sw.js : le shell est mis en cache par
+   un service worker écrit à la main, donc sans bump du cache le nouveau code n'atteint
+   jamais les téléphones. La ligne « à propos » affiche AUSSI le cache réellement actif,
+   précisément pour que toute dérive entre les deux se voie. */
+const APP_VERSION = "1.1.0";
+
 const LS = {
   owner: "sv_owner",
   repo: "sv_repo",
@@ -17,6 +24,7 @@ const LS = {
   episodeCache: "sv_episode_cache",
   summaryCache: "sv_summary_cache",
   activeCategory: "sv_active_category",
+  lastSync: "sv_last_sync",
 };
 
 /* ------------------------- Helpers purs (testables) ------------------------- */
@@ -3241,6 +3249,7 @@ async function boot() {
 
   try {
     await loadAll();
+    localStorage.setItem(LS.lastSync, String(Date.now()));
     showScreen("main-screen");
     document.getElementById("load-error").classList.add("hidden");
     await renderAll();
@@ -3252,7 +3261,33 @@ async function boot() {
   }
 }
 
+/** Version déclarée, shell réellement en cache, et date du dernier chargement réussi
+ *  depuis GitHub. De quoi répondre à « ai-je la dernière version ? » et « mes données
+ *  sont-elles à jour ? » sans ouvrir les outils de développement. */
+async function renderAbout() {
+  const el = document.getElementById("about-line");
+  if (!el) return;
+  let shell = "non installé";
+  try {
+    const keys = await caches.keys();
+    shell = keys.find((k) => k.startsWith("suivi-shell-")) || "non installé";
+  } catch {
+    shell = "indisponible";
+  }
+  const ts = Number(localStorage.getItem(LS.lastSync)) || 0;
+  const sync = ts
+    ? new Date(ts).toLocaleString("fr-FR", {
+        day: "2-digit",
+        month: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "jamais";
+  el.textContent = `Omnivore ${APP_VERSION} · shell ${shell} · dernière synchro : ${sync}`;
+}
+
 function initSetupScreen() {
+  void renderAbout() // l'écran de réglages est aussi le premier écran d'une install neuve
   const cfg = getConfig();
   if (cfg.owner) document.getElementById("input-owner").value = cfg.owner;
   if (cfg.repo) document.getElementById("input-repo").value = cfg.repo;
@@ -3941,6 +3976,7 @@ if (typeof document !== "undefined") {
     document.getElementById("btn-refresh").addEventListener("click", boot);
     document.getElementById("btn-settings").addEventListener("click", () => {
       showScreen("setup-screen");
+      void renderAbout();
     });
 
     syncTopbarHeight();
