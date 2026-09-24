@@ -12,7 +12,7 @@
    un service worker écrit à la main, donc sans bump du cache le nouveau code n'atteint
    jamais les téléphones. La ligne « à propos » affiche AUSSI le cache réellement actif,
    précisément pour que toute dérive entre les deux se voie. */
-const APP_VERSION = "1.4.0";
+const APP_VERSION = "1.5.0";
 
 const LS = {
   owner: "sv_owner",
@@ -2957,8 +2957,18 @@ async function renderListsOnly() {
  * optimiste s'il n'a pas été enregistré. */
 function onEpisodeWriteError(e) {
   console.error("Échec d'enregistrement (progression) :", e);
-  showToast("⚠ Enregistrement échoué — resynchronisation…");
-  boot();
+  const msg = (e && e.message) || "erreur inconnue";
+  // 401/403 = problème d'autorisation GitHub (token expiré ou en lecture
+  // seule) : c'est de loin la cause la plus fréquente d'un échec d'écriture
+  // alors que la lecture fonctionne -> on guide vers les Réglages.
+  const authIssue = /\(401\)|\(403\)/.test(msg);
+  const hint = authIssue
+    ? " — ton token GitHub est expiré ou en lecture seule. Recrée un token fine-grained (Contents: Read and write) et mets-le à jour dans Réglages."
+    : "";
+  showToast(`⚠ Échec d'enregistrement : ${msg}${hint}`);
+  // Resync depuis GitHub (source de vérité) après un court délai, pour ne pas
+  // laisser un état non enregistré tout en laissant le message lisible.
+  setTimeout(() => boot(), 1800);
 }
 
 /** Marque l'épisode actuellement affiché comme vu (bouton "✓ Vu" de la
